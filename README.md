@@ -1,0 +1,2 @@
+# coremcp
+CoreMCP by CoreBase
