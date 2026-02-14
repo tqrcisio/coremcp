@@ -5,7 +5,7 @@ BINARY_NAME=coremcp
 BUILD_DIR=bin
 GO=go
 GOFLAGS=-v
-LDFLAGS=-ldflags "-s -w"
+LDFLAGS=-ldflags "-s -w -X 'main.Version=$(VERSION)' -X 'main.Commit=$(COMMIT)' -X 'main.Date=$(DATE)'"
 
 # Build info
 VERSION?=$(shell git describe --tags --always --dirty)
