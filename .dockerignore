@@ -1,0 +1,41 @@
+# Docker ignore file
+.git
+.github
+.gitignore
+.golangci.yml
+
+# Documentation
+*.md
+!README.md
+LICENSE
+
+# Config files (don't copy real credentials)
+coremcp.yaml
+*.local.yaml
+
+# Build artifacts
+bin/
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test files
+*_test.go
+coverage.*
+*.coverprofile
+
+# Development files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# CI/CD
+.github/
+
+# Temp files
+tmp/
+temp/

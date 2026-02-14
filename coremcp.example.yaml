@@ -1,0 +1,36 @@
+# CoreMCP Configuration Example
+# Copy this file to coremcp.yaml and customize for your environment
+
+server:
+  name: "coremcp-agent"
+  version: "0.1.0"
+  transport: "stdio"  # stdio (for Claude Desktop) or http (for remote server)
+  port: 8080          # Only used in http mode
+
+logging:
+  level: "info"       # debug, info, warn, error
+  format: "json"      # text or json
+
+# Database sources configuration
+sources:
+  # Example: Dummy database (for testing)
+  - name: "test_db"
+    type: "dummy"
+    dsn: "dummy://test"
+    readonly: true
+
+  # Example: Microsoft SQL Server
+  # - name: "production_db"
+  #   type: "mssql"
+  #   dsn: "sqlserver://username:password@localhost:1433?database=mydb&encrypt=disable"
+  #   readonly: true
+
+  # Example: Firebird (not implemented yet)
+  # - name: "legacy_db"
+  #   type: "firebird"
+  #   dsn: "firebird://user:password@localhost:3050/database.fdb"
+  #   readonly: true
+
+# DSN Format Examples:
+# MSSQL: sqlserver://username:password@host:port?database=dbname&encrypt=disable
+# Dummy: dummy://anything
