@@ -68,11 +68,15 @@ func TestGetSchemaContext(t *testing.T) {
 
 	// Add a source
 	src, _ := dummy.New("dummy://test")
-	src.Connect(context.Background())
+	if err := src.Connect(context.Background()); err != nil {
+		t.Fatalf("Failed to connect source: %v", err)
+	}
 	mcpSrv.AddSource("test_db", src, false)
 
 	// Load schemas
-	mcpSrv.LoadSchemas(context.Background())
+	if err := mcpSrv.LoadSchemas(context.Background()); err != nil {
+		t.Fatalf("Failed to load schemas: %v", err)
+	}
 
 	// Now context should be populated
 	if ctx := mcpSrv.GetSchemaContext(); ctx == "" {
@@ -85,9 +89,13 @@ func TestSchemaPromptHandler(t *testing.T) {
 
 	// Create and add a dummy source
 	src, _ := dummy.New("dummy://test")
-	src.Connect(context.Background())
+	if err := src.Connect(context.Background()); err != nil {
+		t.Fatalf("Failed to connect source: %v", err)
+	}
 	mcpSrv.AddSource("test_db", src, true)
-	mcpSrv.LoadSchemas(context.Background())
+	if err := mcpSrv.LoadSchemas(context.Background()); err != nil {
+		t.Fatalf("Failed to load schemas: %v", err)
+	}
 
 	// Test the prompt handler
 	// We're just testing that the schema context contains expected information

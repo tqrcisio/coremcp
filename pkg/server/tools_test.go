@@ -13,7 +13,9 @@ func TestHandleListTables(t *testing.T) {
 	mcpSrv := NewMCPServer("test-server", "1.0.0")
 
 	src, _ := dummy.New("dummy://test")
-	src.Connect(context.Background())
+	if err := src.Connect(context.Background()); err != nil {
+		t.Fatalf("Failed to connect source: %v", err)
+	}
 	mcpSrv.AddSource("test_db", src, true)
 
 	// Create request
@@ -44,7 +46,9 @@ func TestHandleDescribeTable(t *testing.T) {
 	mcpSrv := NewMCPServer("test-server", "1.0.0")
 
 	src, _ := dummy.New("dummy://test")
-	src.Connect(context.Background())
+	if err := src.Connect(context.Background()); err != nil {
+		t.Fatalf("Failed to connect source: %v", err)
+	}
 	mcpSrv.AddSource("test_db", src, true)
 
 	// Create request
@@ -88,7 +92,9 @@ func TestAddCustomTool(t *testing.T) {
 	mcpSrv := NewMCPServer("test-server", "1.0.0")
 
 	src, _ := dummy.New("dummy://test")
-	src.Connect(context.Background())
+	if err := src.Connect(context.Background()); err != nil {
+		t.Fatalf("Failed to connect source: %v", err)
+	}
 	mcpSrv.AddSource("test_db", src, true)
 
 	// Add a custom tool
@@ -123,7 +129,9 @@ func TestDescribeTableNotFound(t *testing.T) {
 	mcpSrv := NewMCPServer("test-server", "1.0.0")
 
 	src, _ := dummy.New("dummy://test")
-	src.Connect(context.Background())
+	if err := src.Connect(context.Background()); err != nil {
+		t.Fatalf("Failed to connect source: %v", err)
+	}
 	mcpSrv.AddSource("test_db", src, true)
 
 	request := mcp.CallToolRequest{}
