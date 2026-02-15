@@ -12,9 +12,28 @@ import (
 
 // Config represents the complete CoreMCP configuration.
 type Config struct {
-	Server  ServerConfig   `mapstructure:"server"`
-	Logging LoggingConfig  `mapstructure:"logging"`
-	Sources []SourceConfig `mapstructure:"sources"`
+	Server      ServerConfig       `mapstructure:"server"`
+	Logging     LoggingConfig      `mapstructure:"logging"`
+	Sources     []SourceConfig     `mapstructure:"sources"`
+	CustomTools []CustomToolConfig `mapstructure:"custom_tools"`
+	Security    SecurityConfig     `mapstructure:"security"`
+}
+
+// SecurityConfig holds security-related configuration.
+type SecurityConfig struct {
+	MaxRowLimit      int              `mapstructure:"max_row_limit"`      // Maximum rows to return (default: 1000)
+	EnablePIIMasking bool             `mapstructure:"enable_pii_masking"` // Enable PII data masking
+	PIIPatterns      []PIIMaskPattern `mapstructure:"pii_patterns"`       // PII patterns to mask
+	AllowedKeywords  []string         `mapstructure:"allowed_keywords"`   // SQL keywords to allow beyond SELECT/WITH
+	BlockedKeywords  []string         `mapstructure:"blocked_keywords"`   // Additional SQL keywords to block
+}
+
+// PIIMaskPattern defines a pattern for masking PII data.
+type PIIMaskPattern struct {
+	Name        string `mapstructure:"name"`        // Pattern name (e.g., "credit_card")
+	Pattern     string `mapstructure:"pattern"`     // Regex pattern
+	Replacement string `mapstructure:"replacement"` // Replacement string (default: "***")
+	Enabled     bool   `mapstructure:"enabled"`     // Whether this pattern is active
 }
 
 // ServerConfig holds server-related configuration.
@@ -35,6 +54,23 @@ type SourceConfig struct {
 	Type     string `mapstructure:"type"` // mssql, firebird, postgres
 	DSN      string `mapstructure:"dsn"`  // Data Source Name (Connection String)
 	ReadOnly bool   `mapstructure:"readonly"`
+}
+
+// CustomToolConfig defines a custom MCP tool with a predefined query.
+type CustomToolConfig struct {
+	Name        string          `mapstructure:"name"`        // Tool name (e.g., "get_daily_sales")
+	Description string          `mapstructure:"description"` // Tool description for AI
+	Source      string          `mapstructure:"source"`      // Which source to run against
+	Query       string          `mapstructure:"query"`       // SQL query template
+	Parameters  []ToolParameter `mapstructure:"parameters"`  // Optional parameters
+}
+
+// ToolParameter defines a parameter for a custom tool.
+type ToolParameter struct {
+	Name        string `mapstructure:"name"`
+	Description string `mapstructure:"description"`
+	Required    bool   `mapstructure:"required"`
+	Default     string `mapstructure:"default"`
 }
 
 // LoadConfig loads the CoreMCP configuration from a YAML file.
@@ -58,6 +94,8 @@ func LoadConfig(path string) (*Config, error) {
 	v.SetDefault("server.transport", "stdio")
 	v.SetDefault("server.port", 8080)
 	v.SetDefault("logging.level", "info")
+	v.SetDefault("security.max_row_limit", 1000)
+	v.SetDefault("security.enable_pii_masking", false)
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {

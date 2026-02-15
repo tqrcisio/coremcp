@@ -38,12 +38,34 @@ func (d *DummyAdapter) Close(ctx context.Context) error {
 func (d *DummyAdapter) GetSchema(ctx context.Context) ([]core.TableSchema, error) {
 	return []core.TableSchema{
 		{
-			Name:    "users",
-			Columns: []string{"id", "username", "email"},
+			Name: "users",
+			Columns: []core.ColumnInfo{
+				{Name: "id", DataType: "int", IsNullable: false, Description: "User ID (Primary Key)"},
+				{Name: "username", DataType: "varchar(50)", IsNullable: false, Description: "User's unique username"},
+				{Name: "email", DataType: "varchar(100)", IsNullable: false, Description: "User's email address"},
+				{Name: "created_at", DataType: "datetime", IsNullable: false, Description: "Account creation timestamp"},
+			},
+			PrimaryKeys: []string{"id"},
+			ForeignKeys: []core.ForeignKey{},
 		},
 		{
-			Name:    "orders",
-			Columns: []string{"id", "user_id", "total", "status"},
+			Name: "orders",
+			Columns: []core.ColumnInfo{
+				{Name: "id", DataType: "int", IsNullable: false, Description: "Order ID (Primary Key)"},
+				{Name: "user_id", DataType: "int", IsNullable: false, Description: "Reference to users table"},
+				{Name: "total", DataType: "decimal(10,2)", IsNullable: false, Description: "Total order amount"},
+				{Name: "status", DataType: "varchar(20)", IsNullable: false, Description: "Order status (pending, completed, cancelled)"},
+				{Name: "created_at", DataType: "datetime", IsNullable: false, Description: "Order creation timestamp"},
+			},
+			PrimaryKeys: []string{"id"},
+			ForeignKeys: []core.ForeignKey{
+				{
+					ColumnName:       "user_id",
+					ReferencedTable:  "users",
+					ReferencedColumn: "id",
+					ConstraintName:   "FK_orders_users",
+				},
+			},
 		},
 	}, nil
 }

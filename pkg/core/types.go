@@ -22,9 +22,26 @@ type Source interface {
 
 // TableSchema represents the structure of a database table.
 type TableSchema struct {
-	Name    string
-	Columns []string
-	// Foreign Key, Primary Key etc...
+	Name        string
+	Columns     []ColumnInfo
+	ForeignKeys []ForeignKey
+	PrimaryKeys []string
+}
+
+// ColumnInfo represents detailed information about a table column.
+type ColumnInfo struct {
+	Name        string
+	DataType    string
+	IsNullable  bool
+	Description string // Comment/Description from database
+}
+
+// ForeignKey represents a foreign key relationship.
+type ForeignKey struct {
+	ColumnName       string
+	ReferencedTable  string
+	ReferencedColumn string
+	ConstraintName   string
 }
 
 // QueryResult contains the results of a database query execution.

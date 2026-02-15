@@ -34,3 +34,75 @@ sources:
 # DSN Format Examples:
 # MSSQL: sqlserver://username:password@host:port?database=dbname&encrypt=disable
 # Dummy: dummy://anything
+
+# Security configuration
+security:
+  # Maximum number of rows to return from any query (prevents DB overload)
+  max_row_limit: 1000
+
+  # Enable PII (Personally Identifiable Information) masking
+  enable_pii_masking: true
+
+  # PII patterns to mask in query results
+  pii_patterns:
+    - name: "credit_card"
+      pattern: '\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b'
+      replacement: "****-****-****-****"
+      enabled: true
+
+    - name: "email"
+      pattern: '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+      replacement: "***@***.***"
+      enabled: true
+
+    - name: "turkish_id"
+      pattern: '\b[1-9]\d{10}\b'
+      replacement: "***********"
+      enabled: true
+
+    - name: "phone"
+      pattern: '\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b'
+      replacement: "***-***-****"
+      enabled: true
+
+    - name: "iban"
+      pattern: '\b[A-Z]{2}\d{2}[A-Z0-9]{1,30}\b'
+      replacement: "********************"
+      enabled: false  # Disabled by default
+
+  # Additional SQL keywords to allow (beyond SELECT/WITH)
+  allowed_keywords: []
+
+  # Additional SQL keywords to block (beyond default dangerous ones)
+  blocked_keywords: []
+
+# Custom tools configuration (optional)
+# Define reusable queries as MCP tools
+custom_tools:
+  # Example: Get daily sales summary
+  - name: "get_daily_sales"
+    description: "Retrieves daily sales summary for a specific date"
+    source: "test_db"
+    query: "SELECT * FROM orders WHERE DATE(created_at) = '{{date}}'"
+    parameters:
+      - name: "date"
+        description: "Date in YYYY-MM-DD format"
+        required: true
+
+  # Example: Get top customers
+  - name: "get_top_customers"
+    description: "Lists top N customers by order count"
+    source: "test_db"
+    query: "SELECT user_id, COUNT(*) as order_count FROM orders GROUP BY user_id ORDER BY order_count DESC LIMIT {{limit}}"
+    parameters:
+      - name: "limit"
+        description: "Number of top customers to return"
+        required: true
+        default: "10"
+
+  # Example: No-parameter custom query
+  - name: "get_pending_orders"
+    description: "Gets all orders with pending status"
+    source: "test_db"
+    query: "SELECT * FROM orders WHERE status = 'pending' ORDER BY created_at DESC"
+    parameters: []

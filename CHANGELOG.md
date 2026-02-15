@@ -5,7 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-02-15
+
+### Added
+- **Enterprise-Grade Security Features:**
+  - **AST-Based Query Sanitization**: Uses sqlparser library for deep SQL analysis
+    - Blocks dangerous operations: INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, EXEC, MERGE, etc.
+    - Allows only SELECT and WITH (CTE) queries
+    - Validates queries at AST level, not just regex
+  - **PII Data Masking**: Automatically masks personally identifiable information
+    - Built-in patterns: Credit cards, emails, SSNs, Turkish IDs, IBANs, phone numbers
+    - Configurable custom patterns via regex
+    - Enable/disable per pattern
+    - Enterprise-ready for GDPR/KVKK compliance
+  - **Automatic Row Limiting**: Prevents database overload
+    - Configurable max row limit (default: 1000)
+    - Automatically adds LIMIT clause to queries
+    - Preserves existing LIMIT if present
+- **Dynamic Tool Generation:**
+  - New `list_tables` tool: Lists all tables in a database with summary information
+  - New `describe_table` tool: Shows detailed schema for a specific table
+  - Custom tool support: Define reusable SQL queries as MCP tools in config
+  - Parameter substitution in custom queries using `{{parameter}}` syntax
+- **Automatic Schema Discovery:** CoreMCP now automatically scans database tables, columns, primary keys, and foreign keys on startup
+- **Column Comments/Descriptions Support:** Extracts and presents database column comments (e.g., MS_Description in MSSQL) to AI for better context
+- **Schema Context Prompt:** New `database_schema` MCP prompt that provides complete database structure to Claude automatically
+- **Enhanced Schema Types:** 
+  - New `ColumnInfo` type with name, data type, nullable flag, and description
+  - New `ForeignKey` type with full relationship information
+  - Enhanced `TableSchema` with primary keys array
+- **MSSQL Extended Support:**
+  - Automatic extraction of column descriptions from MS_Description extended properties
+  - Full primary key discovery
+  - Complete foreign key relationship mapping
+
+### Changed
+- **Query Execution**: Now uses security validator and row limiter for all queries
+- **Config Structure**: Added `security` section with PII masking and row limit configuration
+- **MCP Server**: Added `list_tables` and `describe_table` handlers
+- **Config Structure**: Added `custom_tools` section for defining custom query tools
+- **MSSQL Adapter:** Enhanced `GetSchema()` to retrieve complete table metadata including types, constraints, and relationships
+- **MCP Server:** Added automatic schema loading during startup via `LoadSchemas()` method
+- **Core Types:** Updated `TableSchema` structure to support rich metadata
+
+### Security
+- **BREAKING**: All queries now validated with AST parser (blocks write operations)
+- **BREAKING**: Automatic LIMIT clause added to all SELECT queries (configurable)
+- PII masking can be enabled via `security.enable_pii_masking` in config
 
 ## [0.1.0] - 2026-02-14
 
