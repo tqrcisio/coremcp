@@ -1,0 +1,36 @@
+name: Sync Docs to Mothership
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/**'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source (CoreMCP)
+        uses: actions/checkout@v4
+
+      - name: Checkout Destination (CoreBase Docs)
+        uses: actions/checkout@v4
+        with:
+          repository: corebasehq/docs
+          token: ${{ secrets.PAT_TOKEN }}
+          path: destination-repo
+
+      - name: Copy Files
+        run: |
+          rm -rf destination-repo/coremcp/*
+          cp -r docs/* destination-repo/coremcp/
+
+      - name: Commit and Push
+        run: |
+          cd destination-repo
+          git config user.name "CoreBase Bot"
+          git config user.email "bot@corebasehq.com"
+          git add .
+          git commit -m "sync: update docs from coremcp repo" || echo "No changes to commit"
+          git push
