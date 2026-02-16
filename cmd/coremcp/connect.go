@@ -127,8 +127,8 @@ func init() {
 	connectCmd.Flags().IntP("max-reconnect", "r", 10, "Maximum reconnection attempts (0 for infinite)")
 	connectCmd.Flags().DurationP("reconnect-delay", "d", 5*time.Second, "Delay between reconnection attempts")
 
-	connectCmd.MarkFlagRequired("server")
-	connectCmd.MarkFlagRequired("token")
+	_ = connectCmd.MarkFlagRequired("server")
+	_ = connectCmd.MarkFlagRequired("token")
 
 	rootCmd.AddCommand(connectCmd)
 }
@@ -343,9 +343,11 @@ func (c *ConnectClient) handleMessage(msg *WSMessage) {
 	switch msg.Type {
 	case MsgTypePing:
 		// Respond to ping with heartbeat
-		c.sendMessage(MsgTypeHeartbeat, map[string]string{
+		if err := c.sendMessage(MsgTypeHeartbeat, map[string]string{
 			"status": "alive",
-		})
+		}); err != nil {
+			log.Printf("[WARN] Failed to send heartbeat response: %v", err)
+		}
 
 	case MsgTypeCommand:
 		c.handleCommand(msg)
@@ -362,7 +364,9 @@ func (c *ConnectClient) handleCommand(msg *WSMessage) {
 	var cmdPayload CommandPayload
 	if err := json.Unmarshal(msg.Payload, &cmdPayload); err != nil {
 		log.Printf("[ERROR] Failed to parse command payload: %v", err)
-		c.sendError(msg.ID, fmt.Sprintf("Invalid command payload: %v", err))
+		if sendErr := c.sendError(msg.ID, fmt.Sprintf("Invalid command payload: %v", err)); sendErr != nil {
+			log.Printf("[WARN] Failed to send error response: %v", sendErr)
+		}
 		return
 	}
 
@@ -398,10 +402,14 @@ func (c *ConnectClient) handleCommand(msg *WSMessage) {
 	// Send response
 	if err != nil {
 		log.Printf("[ERROR] Command execution failed: %v", err)
-		c.sendError(msg.ID, err.Error())
+		if sendErr := c.sendError(msg.ID, err.Error()); sendErr != nil {
+			log.Printf("[WARN] Failed to send error response: %v", sendErr)
+		}
 	} else {
 		log.Printf("[INFO] Command executed successfully")
-		c.sendResponse(msg.ID, result)
+		if sendErr := c.sendResponse(msg.ID, result); sendErr != nil {
+			log.Printf("[WARN] Failed to send response: %v", sendErr)
+		}
 	}
 }
 
@@ -579,7 +587,7 @@ func (c *ConnectClient) closeConnection() {
 	if conn != nil {
 		// Send close message with write mutex
 		c.writeMu.Lock()
-		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+		_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 		c.writeMu.Unlock()
 		conn.Close()
 	}
