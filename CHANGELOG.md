@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-02-16
+
+### Added
+- **Remote Connect Mode**: WebSocket-based cloud connectivity for SaaS deployments
+  - New `connect` command for remote management
+  - WebSocket client implementation with gorilla/websocket
+  - Authentication with API tokens
+  - Support for remote commands: `run_sql`, `get_schema`, `list_sources`, `health_check`
+  - Auto-Reconnection Logic: Configurable retry mechanism with exponential backoff
+  - Remote Configuration Sync: Update database connections without redeployment
+  - Heartbeat/ping-pong for connection monitoring
+  - Perfect for factory deployments (no inbound ports required!)
+  - Agent-initiated outbound connections only
+  - Graceful shutdown handling
+
+### Changed
+- Architecture updated to support both stdio (local) and WebSocket (remote) modes
+- README updated with comprehensive `connect` mode documentation
+- Removed emojis from log messages for professional enterprise-grade logging
+- Log messages now use standard prefixes: [INFO], [ERROR], [WARN], [DEBUG]
+
 ## [0.2.1] - 2026-02-15
 
 ### Fixed

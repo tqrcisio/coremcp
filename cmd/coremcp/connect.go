@@ -1,0 +1,605 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/url"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/corebasehq/coremcp/pkg/adapter"
+	"github.com/corebasehq/coremcp/pkg/core"
+	"github.com/gorilla/websocket"
+	"github.com/spf13/cobra"
+)
+
+// MessageType represents the type of WebSocket message
+type MessageType string
+
+const (
+	// Client -> Server Messages
+	MsgTypeAuth      MessageType = "auth"
+	MsgTypeHeartbeat MessageType = "heartbeat"
+	MsgTypeResponse  MessageType = "response"
+	MsgTypeError     MessageType = "error"
+
+	// Server -> Client Messages
+	MsgTypeCommand    MessageType = "command"
+	MsgTypeConfigSync MessageType = "config_sync"
+	MsgTypePing       MessageType = "ping"
+)
+
+// CommandType represents the type of command to execute
+type CommandType string
+
+const (
+	CmdRunSQL      CommandType = "run_sql"
+	CmdGetSchema   CommandType = "get_schema"
+	CmdListSources CommandType = "list_sources"
+	CmdHealthCheck CommandType = "health_check"
+)
+
+// WebSocket message structures
+type WSMessage struct {
+	ID        string          `json:"id"`
+	Type      MessageType     `json:"type"`
+	Timestamp int64           `json:"timestamp"`
+	Payload   json.RawMessage `json:"payload"`
+}
+
+type AuthPayload struct {
+	Token    string `json:"token"`
+	AgentID  string `json:"agent_id,omitempty"`
+	Version  string `json:"version"`
+	Hostname string `json:"hostname"`
+}
+
+type CommandPayload struct {
+	CommandType CommandType            `json:"command_type"`
+	Source      string                 `json:"source,omitempty"`
+	Query       string                 `json:"query,omitempty"`
+	Params      map[string]interface{} `json:"params,omitempty"`
+}
+
+type ResponsePayload struct {
+	CommandID string      `json:"command_id"`
+	Success   bool        `json:"success"`
+	Data      interface{} `json:"data,omitempty"`
+	Error     string      `json:"error,omitempty"`
+}
+
+type ConfigSyncPayload struct {
+	Sources      []RemoteSource `json:"sources"`
+	Security     RemoteSecurity `json:"security"`
+	RefreshToken string         `json:"refresh_token,omitempty"`
+}
+
+type RemoteSource struct {
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	DSN      string `json:"dsn"`
+	ReadOnly bool   `json:"read_only"`
+}
+
+type RemoteSecurity struct {
+	MaxRowLimit      int      `json:"max_row_limit"`
+	EnablePIIMasking bool     `json:"enable_pii_masking"`
+	AllowedKeywords  []string `json:"allowed_keywords"`
+	BlockedKeywords  []string `json:"blocked_keywords"`
+}
+
+// ConnectClient manages WebSocket connection to CoreBase Cloud
+type ConnectClient struct {
+	serverURL      string
+	token          string
+	conn           *websocket.Conn
+	mu             sync.RWMutex
+	writeMu        sync.Mutex // Protects WebSocket writes
+	sources        map[string]core.Source
+	ctx            context.Context
+	cancel         context.CancelFunc
+	reconnectDelay time.Duration
+	maxReconnect   int
+	agentID        string
+	hostname       string
+}
+
+var connectCmd = &cobra.Command{
+	Use:   "connect",
+	Short: "Connect to CoreBase Cloud Platform",
+	Long: `Connect to CoreBase Cloud Platform and enable remote management.
+	
+This command establishes a WebSocket connection to CoreBase Cloud,
+allowing you to manage your database connections remotely without
+opening any inbound ports. Perfect for secure factory deployments!`,
+	RunE: runConnect,
+}
+
+func init() {
+	connectCmd.Flags().StringP("server", "s", "", "CoreBase Cloud WebSocket URL (e.g., wss://api.corebase.com/ws/agent)")
+	connectCmd.Flags().StringP("token", "t", "", "Authentication token (e.g., sk_fabrika_123)")
+	connectCmd.Flags().StringP("agent-id", "a", "", "Agent ID (optional, auto-generated if not provided)")
+	connectCmd.Flags().IntP("max-reconnect", "r", 10, "Maximum reconnection attempts (0 for infinite)")
+	connectCmd.Flags().DurationP("reconnect-delay", "d", 5*time.Second, "Delay between reconnection attempts")
+
+	connectCmd.MarkFlagRequired("server")
+	connectCmd.MarkFlagRequired("token")
+
+	rootCmd.AddCommand(connectCmd)
+}
+
+func runConnect(cmd *cobra.Command, args []string) error {
+	log.SetOutput(os.Stderr)
+
+	serverURL, _ := cmd.Flags().GetString("server")
+	token, _ := cmd.Flags().GetString("token")
+	agentID, _ := cmd.Flags().GetString("agent-id")
+	maxReconnect, _ := cmd.Flags().GetInt("max-reconnect")
+	reconnectDelay, _ := cmd.Flags().GetDuration("reconnect-delay")
+
+	// Validate WebSocket URL
+	u, err := url.Parse(serverURL)
+	if err != nil {
+		return fmt.Errorf("invalid server URL: %v", err)
+	}
+	if u.Scheme != "ws" && u.Scheme != "wss" {
+		return fmt.Errorf("invalid server URL: scheme must be ws or wss, got %s", u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("invalid server URL: missing host")
+	}
+
+	// Get hostname
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "unknown"
+	}
+
+	// Generate agent ID if not provided
+	if agentID == "" {
+		agentID = fmt.Sprintf("agent-%s-%d", hostname, time.Now().Unix())
+	}
+
+	// Create context with cancellation
+	ctx, cancel := context.WithCancel(cmd.Context())
+	defer cancel()
+
+	// Handle graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	client := &ConnectClient{
+		serverURL:      serverURL,
+		token:          token,
+		sources:        make(map[string]core.Source),
+		ctx:            ctx,
+		cancel:         cancel,
+		reconnectDelay: reconnectDelay,
+		maxReconnect:   maxReconnect,
+		agentID:        agentID,
+		hostname:       hostname,
+	}
+
+	fmt.Fprintf(os.Stderr, "[INFO] CoreMCP Connect Mode\n")
+	fmt.Fprintf(os.Stderr, "[INFO] Server: %s\n", serverURL)
+	fmt.Fprintf(os.Stderr, "[INFO] Agent ID: %s\n", agentID)
+	fmt.Fprintf(os.Stderr, "[INFO] Hostname: %s\n", hostname)
+	fmt.Fprintf(os.Stderr, "\n")
+
+	// Start connection with retry logic
+	go func() {
+		if err := client.connectWithRetry(); err != nil {
+			log.Printf("[ERROR] Failed to connect: %v", err)
+			cancel()
+		}
+	}()
+
+	// Wait for shutdown signal
+	select {
+	case <-sigChan:
+		fmt.Fprintf(os.Stderr, "\n[WARN] Received shutdown signal, disconnecting gracefully...\n")
+		cancel()
+	case <-ctx.Done():
+	}
+
+	// Cleanup
+	client.cleanup()
+	fmt.Fprintf(os.Stderr, "[INFO] CoreMCP Connect stopped.\n")
+
+	return nil
+}
+
+func (c *ConnectClient) connectWithRetry() error {
+	attempt := 0
+
+	for {
+		attempt++
+
+		if c.maxReconnect > 0 && attempt > c.maxReconnect {
+			return fmt.Errorf("maximum reconnection attempts (%d) reached", c.maxReconnect)
+		}
+
+		if attempt > 1 {
+			// Exponential backoff with max delay cap
+			baseDelay := c.reconnectDelay
+			maxDelay := 5 * time.Minute
+			delay := baseDelay
+			for i := 1; i < attempt-1; i++ {
+				delay *= 2
+				if delay > maxDelay {
+					delay = maxDelay
+					break
+				}
+			}
+			// Add jitter (±10%)
+			jitter := time.Duration(float64(delay) * 0.1 * (2*float64(time.Now().UnixNano()%100)/100.0 - 1))
+			delay += jitter
+
+			log.Printf("[INFO] Reconnection attempt %d/%d in %v...", attempt, c.maxReconnect, delay)
+			select {
+			case <-time.After(delay):
+			case <-c.ctx.Done():
+				return c.ctx.Err()
+			}
+		}
+
+		if err := c.connect(); err != nil {
+			log.Printf("[ERROR] Connection attempt %d failed: %v", attempt, err)
+			continue
+		}
+
+		// Successfully connected, handle messages
+		log.Println("[INFO] Connected to CoreBase Cloud!")
+
+		if err := c.handleMessages(); err != nil {
+			log.Printf("[WARN] Connection lost: %v", err)
+			c.closeConnection()
+
+			// Don't retry if context is cancelled
+			if c.ctx.Err() != nil {
+				return c.ctx.Err()
+			}
+
+			continue
+		}
+
+		return nil
+	}
+}
+
+func (c *ConnectClient) connect() error {
+	// Create WebSocket dialer with timeout
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 10 * time.Second,
+	}
+
+	// Connect to WebSocket server
+	conn, resp, err := dialer.Dial(c.serverURL, nil)
+	if err != nil {
+		if resp != nil {
+			return fmt.Errorf("WebSocket dial failed (HTTP %d): %v", resp.StatusCode, err)
+		}
+		return fmt.Errorf("WebSocket dial failed: %v", err)
+	}
+
+	c.mu.Lock()
+	c.conn = conn
+	c.mu.Unlock()
+
+	// Send authentication message
+	authPayload := AuthPayload{
+		Token:    c.token,
+		AgentID:  c.agentID,
+		Version:  "v0.1.0", // TODO: Get from config or build info
+		Hostname: c.hostname,
+	}
+
+	if err := c.sendMessage(MsgTypeAuth, authPayload); err != nil {
+		c.closeConnection()
+		return fmt.Errorf("authentication failed: %v", err)
+	}
+
+	return nil
+}
+
+func (c *ConnectClient) handleMessages() error {
+	// Start heartbeat goroutine
+	go c.heartbeatLoop()
+
+	// Read messages from server
+	for {
+		select {
+		case <-c.ctx.Done():
+			return c.ctx.Err()
+		default:
+		}
+
+		c.mu.RLock()
+		conn := c.conn
+		c.mu.RUnlock()
+
+		if conn == nil {
+			return fmt.Errorf("connection is nil")
+		}
+
+		var msg WSMessage
+		if err := conn.ReadJSON(&msg); err != nil {
+			return fmt.Errorf("read message failed: %v", err)
+		}
+
+		// Handle message asynchronously
+		go c.handleMessage(&msg)
+	}
+}
+
+func (c *ConnectClient) handleMessage(msg *WSMessage) {
+	log.Printf("[DEBUG] Received message: type=%s, id=%s", msg.Type, msg.ID)
+
+	switch msg.Type {
+	case MsgTypePing:
+		// Respond to ping with heartbeat
+		c.sendMessage(MsgTypeHeartbeat, map[string]string{
+			"status": "alive",
+		})
+
+	case MsgTypeCommand:
+		c.handleCommand(msg)
+
+	case MsgTypeConfigSync:
+		c.handleConfigSync(msg)
+
+	default:
+		log.Printf("[WARN] Unknown message type: %s", msg.Type)
+	}
+}
+
+func (c *ConnectClient) handleCommand(msg *WSMessage) {
+	var cmdPayload CommandPayload
+	if err := json.Unmarshal(msg.Payload, &cmdPayload); err != nil {
+		log.Printf("[ERROR] Failed to parse command payload: %v", err)
+		c.sendError(msg.ID, fmt.Sprintf("Invalid command payload: %v", err))
+		return
+	}
+
+	log.Printf("[INFO] Executing command: %s on source: %s", cmdPayload.CommandType, cmdPayload.Source)
+
+	var result interface{}
+	var err error
+
+	switch cmdPayload.CommandType {
+	case CmdRunSQL:
+		result, err = c.executeSQL(cmdPayload.Source, cmdPayload.Query)
+
+	case CmdGetSchema:
+		result, err = c.getSchema(cmdPayload.Source)
+
+	case CmdListSources:
+		result = c.listSources()
+
+	case CmdHealthCheck:
+		c.mu.RLock()
+		sourceCount := len(c.sources)
+		c.mu.RUnlock()
+		result = map[string]interface{}{
+			"status":    "healthy",
+			"timestamp": time.Now().Unix(),
+			"sources":   sourceCount,
+		}
+
+	default:
+		err = fmt.Errorf("unknown command type: %s", cmdPayload.CommandType)
+	}
+
+	// Send response
+	if err != nil {
+		log.Printf("[ERROR] Command execution failed: %v", err)
+		c.sendError(msg.ID, err.Error())
+	} else {
+		log.Printf("[INFO] Command executed successfully")
+		c.sendResponse(msg.ID, result)
+	}
+}
+
+func (c *ConnectClient) handleConfigSync(msg *WSMessage) {
+	var configPayload ConfigSyncPayload
+	if err := json.Unmarshal(msg.Payload, &configPayload); err != nil {
+		log.Printf("[ERROR] Failed to parse config sync payload: %v", err)
+		return
+	}
+
+	log.Printf("[INFO] Syncing configuration: %d source(s)", len(configPayload.Sources))
+
+	// Close existing sources
+	c.mu.Lock()
+	for name, src := range c.sources {
+		if err := src.Close(c.ctx); err != nil {
+			log.Printf("[WARN] Failed to close source %s: %v", name, err)
+		}
+		delete(c.sources, name)
+	}
+	c.mu.Unlock()
+
+	// Create new sources from remote config
+	for _, remoteSrc := range configPayload.Sources {
+		src, err := adapter.NewSource(remoteSrc.Type, remoteSrc.DSN)
+		if err != nil {
+			log.Printf("[ERROR] Failed to create source %s: %v", remoteSrc.Name, err)
+			continue
+		}
+
+		if err := src.Connect(c.ctx); err != nil {
+			log.Printf("[ERROR] Failed to connect to source %s: %v", remoteSrc.Name, err)
+			continue
+		}
+
+		c.mu.Lock()
+		c.sources[remoteSrc.Name] = src
+		c.mu.Unlock()
+
+		log.Printf("[INFO] Source synced: %s (%s) [ReadOnly: %v]", remoteSrc.Name, remoteSrc.Type, remoteSrc.ReadOnly)
+	}
+
+	log.Println("[INFO] Configuration sync completed!")
+}
+
+func (c *ConnectClient) executeSQL(sourceName, query string) (interface{}, error) {
+	c.mu.RLock()
+	src, exists := c.sources[sourceName]
+	c.mu.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("source not found: %s", sourceName)
+	}
+
+	// Execute query
+	result, err := src.ExecuteQuery(c.ctx, query, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+func (c *ConnectClient) getSchema(sourceName string) (interface{}, error) {
+	c.mu.RLock()
+	src, exists := c.sources[sourceName]
+	c.mu.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("source not found: %s", sourceName)
+	}
+
+	// Get schema
+	schema, err := src.GetSchema(c.ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return schema, nil
+}
+
+func (c *ConnectClient) listSources() map[string]interface{} {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	sources := make([]map[string]interface{}, 0, len(c.sources))
+	for name := range c.sources {
+		sources = append(sources, map[string]interface{}{
+			"name":   name,
+			"status": "connected",
+		})
+	}
+
+	return map[string]interface{}{
+		"sources": sources,
+		"count":   len(sources),
+	}
+}
+
+func (c *ConnectClient) sendMessage(msgType MessageType, payload interface{}) error {
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %v", err)
+	}
+
+	msg := WSMessage{
+		ID:        fmt.Sprintf("%d", time.Now().UnixNano()),
+		Type:      msgType,
+		Timestamp: time.Now().Unix(),
+		Payload:   payloadJSON,
+	}
+
+	c.mu.RLock()
+	conn := c.conn
+	c.mu.RUnlock()
+
+	if conn == nil {
+		return fmt.Errorf("connection is nil")
+	}
+
+	// Serialize writes with write mutex
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return conn.WriteJSON(msg)
+}
+
+func (c *ConnectClient) sendResponse(commandID string, data interface{}) error {
+	payload := ResponsePayload{
+		CommandID: commandID,
+		Success:   true,
+		Data:      data,
+	}
+	return c.sendMessage(MsgTypeResponse, payload)
+}
+
+func (c *ConnectClient) sendError(commandID, errMsg string) error {
+	payload := ResponsePayload{
+		CommandID: commandID,
+		Success:   false,
+		Error:     errMsg,
+	}
+	return c.sendMessage(MsgTypeError, payload)
+}
+
+func (c *ConnectClient) heartbeatLoop() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			c.mu.RLock()
+			sourceCount := len(c.sources)
+			c.mu.RUnlock()
+
+			if err := c.sendMessage(MsgTypeHeartbeat, map[string]interface{}{
+				"timestamp": time.Now().Unix(),
+				"sources":   sourceCount,
+			}); err != nil {
+				log.Printf("[WARN] Heartbeat failed: %v", err)
+				return
+			}
+		case <-c.ctx.Done():
+			return
+		}
+	}
+}
+
+func (c *ConnectClient) closeConnection() {
+	c.mu.Lock()
+	conn := c.conn
+	c.conn = nil
+	c.mu.Unlock()
+
+	if conn != nil {
+		// Send close message with write mutex
+		c.writeMu.Lock()
+		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+		c.writeMu.Unlock()
+		conn.Close()
+	}
+}
+
+func (c *ConnectClient) cleanup() {
+	// Close WebSocket connection
+	c.closeConnection()
+
+	// Close all database sources with fresh context (c.ctx may be cancelled)
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cleanupCancel()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for name, src := range c.sources {
+		if err := src.Close(cleanupCtx); err != nil {
+			log.Printf("[WARN] Failed to close source %s: %v", name, err)
+		}
+	}
+	c.sources = make(map[string]core.Source)
+}

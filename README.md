@@ -112,7 +112,11 @@ security:
 
 ## 🎯 Usage
 
-### Start the MCP Server
+CoreMCP has two operation modes:
+
+### 1. Local Mode (serve) - For Claude Desktop
+
+Start the MCP Server locally:
 
 ```bash
 coremcp serve --config coremcp.yaml
@@ -124,7 +128,7 @@ Or use stdio transport (default):
 coremcp serve -t stdio
 ```
 
-### Use with Claude Desktop
+##### Use with Claude Desktop
 
 Add to your Claude Desktop config (`claude_desktop_config.json`):
 
@@ -140,6 +144,60 @@ Add to your Claude Desktop config (`claude_desktop_config.json`):
 }
 ```
 
+### 2. Remote Mode (connect) - For SaaS & Factory Deployments 🚇
+
+Connect to CoreBase Cloud Platform for remote management:
+
+```bash
+coremcp connect --server="wss://api.corebase.com/ws/agent" --token="sk_fabrika_123"
+```
+
+**Perfect for:**
+- 🏭 **Factory Deployments**: No need to open inbound ports
+- 🌐 **Remote Management**: Control databases from anywhere
+- 🔐 **Secure**: Agent initiates connection from inside your network
+- 🔄 **Auto-Reconnect**: Automatic reconnection on network failures
+- ⚙️ **Remote Config**: Update database connections without redeployment
+
+#### Connect Command Options
+
+```bash
+Flags:
+  -s, --server string              CoreBase Cloud WebSocket URL (required)
+  -t, --token string               Authentication token (required)
+  -a, --agent-id string            Agent ID (optional, auto-generated if not provided)
+  -r, --max-reconnect int          Maximum reconnection attempts (default: 10, 0 for infinite)
+  -d, --reconnect-delay duration   Delay between reconnection attempts (default: 5s)
+```
+
+#### Example: Factory Deployment
+
+```bash
+# Factory IT admin runs this command
+./coremcp connect \
+  --server="wss://api.corebasehq.com/ws/agent" \
+  --token="sk_fabrika_xyz" \
+  --agent-id="factory-istanbul-001" \
+  --max-reconnect=0  # Infinite reconnection
+```
+
+**How it works:**
+1. 🔌 Agent connects to CoreBase Cloud via WebSocket (outbound only)
+2. 🔐 Authenticates with your API token
+3. 📡 Receives commands from your CoreBase dashboard
+4. 🎯 Executes SQL queries on local databases
+5. 📤 Sends results back through the secure tunnel
+6. 🔄 Auto-reconnects on connection loss
+
+**Remote Commands Supported:**
+- `run_sql`: Execute SQL queries remotely
+- `get_schema`: Retrieve database schema
+- `list_sources`: List connected databases
+- `health_check`: Check agent status
+- `config_sync`: Update database configurations remotely
+
+**No Port Forwarding Required!** 🎉
+
 ## 🏗️ Architecture
 
 ```
@@ -147,7 +205,8 @@ coremcp/
 ├── cmd/coremcp/       # CLI application entry point
 │   ├── main.go        # Main entry
 │   ├── root.go        # Root command
-│   └── serve.go       # Serve command
+│   ├── serve.go       # Serve command (stdio mode for Claude Desktop)
+│   └── connect.go     # Connect command (WebSocket mode for Cloud)
 ├── pkg/
 │   ├── adapter/       # Database adapters
 │   │   ├── factory.go # Adapter factory pattern
@@ -155,6 +214,7 @@ coremcp/
 │   │   └── mssql/     # MSSQL adapter
 │   ├── config/        # Configuration management
 │   ├── core/          # Core type definitions
+│   ├── security/      # Security features (PII masking, query validation)
 │   └── server/        # MCP server implementation
 └── coremcp.yaml       # Configuration file
 ```
@@ -281,6 +341,9 @@ Apache License 2.0 - see [LICENSE](LICENSE) for details.
 - [x] **AST-Based Query Sanitization** - Block dangerous SQL operations
 - [x] **PII Data Masking** - Mask sensitive information in results
 - [x] **Automatic Row Limiting** - Prevent database overload
+- [x] **WebSocket Connect Mode** - Remote management via CoreBase Cloud 🎉
+- [x] **Auto-Reconnection Logic** - Resilient agent connections
+- [x] **Remote Configuration Sync** - Update database configs remotely
 - [ ] PostgreSQL adapter
 - [ ] MySQL adapter
 - [ ] Firebird adapter (in progress)
@@ -288,6 +351,8 @@ Apache License 2.0 - see [LICENSE](LICENSE) for details.
 - [ ] HTTP transport support
 - [ ] Write operation support (with strict safety guards)
 - [ ] Audit logging
+- [ ] Multi-tenant agent management
+- [ ] Real-time monitoring dashboard
 
 ## 💬 Support
 
