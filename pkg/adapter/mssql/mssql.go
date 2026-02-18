@@ -639,7 +639,7 @@ func (m *MSSQLAdapter) ExecuteProcedure(ctx context.Context, name string, params
 // executeQueryReadUncommitted runs the query inside a READ UNCOMMITTED transaction.// This is equivalent to appending WITH (NOLOCK) to every table reference.
 // The transaction is always rolled back afterwards since we only perform reads.
 func (m *MSSQLAdapter) executeQueryReadUncommitted(ctx context.Context, query string, args ...any) (*core.QueryResult, error) {
-	tx, err := m.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadUncommitted, ReadOnly: true})
+	tx, err := m.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadUncommitted})
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin READ UNCOMMITTED transaction: %w", err)
 	}

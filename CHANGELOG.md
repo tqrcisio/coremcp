@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-02-18
+
+### Fixed
+- **NOLOCK transaction error on `go-mssqldb`:** `executeQueryReadUncommitted` was opening the
+  transaction with `sql.TxOptions{Isolation: sql.LevelReadUncommitted, ReadOnly: true}`. The
+  `go-mssqldb` driver does not support the `ReadOnly` transaction flag and returned:
+  `"read-only transactions are not supported"`. Removed `ReadOnly: true` — `READ UNCOMMITTED`
+  isolation alone is sufficient: it prevents shared lock acquisition and the transaction is always
+  rolled back via `defer tx.Rollback()` so no data is ever modified.
+
 ## [0.4.1] - 2026-02-18
 
 ### Fixed
