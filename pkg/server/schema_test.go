@@ -44,6 +44,11 @@ func TestLoadSchemas(t *testing.T) {
 		"Primary Key",
 		"Foreign Keys",
 		"user_id → users.id",
+		// Views and procedures
+		"View: vw_customer_orders",
+		"Stored Procedure: sp_GetUserOrders",
+		"Stored Procedure: sp_GetDailySummary",
+		"@StartDate",
 	}
 
 	for _, expected := range expectedStrings {

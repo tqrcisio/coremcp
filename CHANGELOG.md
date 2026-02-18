@@ -5,7 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-02-18
+
+### Added
+- **NOLOCK / READ UNCOMMITTED Support (MSSQL):** New per-source `no_lock` config option
+  - When `no_lock: true`, all SELECT queries are executed inside a `READ UNCOMMITTED` transaction — functionally identical to adding `WITH (NOLOCK)` to every table reference
+  - Prevents shared lock acquisition on MSSQL, reducing contention on busy OLTP databases
+  - Transaction is always rolled back after each read; no data is ever modified
+  - Trade-off: may return dirty (uncommitted) data — use only on reporting / AI-assistant workloads
+  - Supported in both `serve` (local) mode and `connect` (remote/WebSocket) mode
+  - New field added to `SourceConfig` (`no_lock: bool`) and `RemoteSource` (`no_lock: bool` in JSON)
+- **Turkish Character Normalization Middleware (MSSQL):** New per-source `normalize_turkish` config option
+  - Solves the "collation war" problem in legacy Turkish ERP databases (`Turkish_CI_AS` / Windows-1254)
+  - **Outgoing query normalization:** Turkish characters inside SQL single-quoted string literals are automatically converted to their ASCII uppercase equivalents before the query is sent
+    - Example: `WHERE ADI = 'Hüseyin'` → `WHERE ADI = 'HUSEYIN'`
+    - Example: `WHERE SEHIR LIKE '%şeker%'` → `WHERE SEHIR LIKE '%SEKER%'`
+    - Only string literals are modified — SQL keywords, column names and query structure are untouched
+    - Mapping: `İıŞşGğğÜüÖöÇç` → `I I S S G G U U O O C C` (plus circumflex variants `ÂâÎîÛû`)
+  - **Incoming result fix (mojibake correction):** Common Windows-1254 bytes misread as Windows-1252 are automatically corrected in result strings
+    - `Ð` → `Gğ`, `Ý` → `İ`, `Þ` → `Ş`, `ð` → `ğ`, `ý` → `ı`, `þ` → `ş`
+  - New package `pkg/turkish` with exported functions: `NormalizeSQLLiterals`, `ToASCIIUpper`, `FixMojibake`, `FixResultValue`
+  - Works together with `no_lock: true` for maximum compatibility on legacy OLTP databases
+  - Supported in both `serve` and `connect` modes
+- **View & Stored Procedure Support (MSSQL):** AI agents can now discover and execute views and stored procedures
+  - New `Source` interface methods: `GetViews`, `GetProcedures`, `ExecuteProcedure`
+  - `GetViews` — fetches all database views with their column definitions via `INFORMATION_SCHEMA.VIEWS`
+  - `GetProcedures` — fetches all stored procedures with parameter names, types, and modes (`IN`/`OUT`/`INOUT`) via `INFORMATION_SCHEMA.ROUTINES` + `INFORMATION_SCHEMA.PARAMETERS`
+  - `ExecuteProcedure` — executes a stored procedure safely:
+    - Procedure name is validated against `^[a-zA-Z_][a-zA-Z0-9_#@.]*$` (SQL injection prevention)
+    - All parameter values are passed as named SQL parameters (`sql.Named`) — no string interpolation
+    - Individual parameter names are also validated against `^[a-zA-Z_][a-zA-Z0-9_]*$`
+    - Blocked entirely when the source is `readonly: true`
+  - **Three new MCP tools** exposed to AI agents:
+    - `list_views` — lists views with columns in markdown table format
+    - `list_procedures` — lists stored procedures with parameters and an inline example call hint
+    - `execute_procedure` — runs a procedure; accepts `params` as a JSON string e.g. `{"StartDate":"2024-01-01","Limit":"10"}`
+  - Views and stored procedures are also included in the schema context built by `LoadSchemas`, so agents see them automatically without calling a tool
+  - Turkish mojibake correction (`normalize_turkish`) is applied to procedure result sets as well
+  - Supported in both `serve` and `connect` modes
+- **SQL Server Version Compatibility:** Automatic version detection and query adaptation for legacy SQL Server deployments
+  - On `Connect()`, CoreMCP queries `SERVERPROPERTY('ProductVersion')` and stores the major version number
+  - `Name()` now reports the detected release (e.g. `"MSSQL (SQL Server 2008/2008 R2)"`) in logs and schema context so the AI knows which SQL dialect to generate
+  - **SQL Server 2000 (v8) compatibility:** all schema-discovery queries branch to legacy system tables:
+    - `GetSchema` uses `sysobjects WHERE xtype = 'U'` instead of `INFORMATION_SCHEMA.TABLES`
+    - Column query uses `INFORMATION_SCHEMA.COLUMNS` only (no `sys.extended_properties` join — column descriptions silently omitted)
+    - FK query uses `sysforeignkeys` / `COL_NAME()` instead of `sys.foreign_keys` / `sys.columns`
+  - **LIMIT → TOP rewrite (all versions):** `security.QueryModifier` uses MySQL-dialect sqlparser and may inject `LIMIT N`; the MSSQL adapter now rewrites this to `SELECT TOP N` before execution
+  - **OFFSET FETCH → TOP rewrite (pre-2012):** AI-generated `OFFSET x ROWS FETCH NEXT N ROWS ONLY` clauses are automatically stripped and replaced with `SELECT TOP N` on SQL Server 2008/2008 R2 and older (major version < 11)
+  - Version constants: 8=2000, 9=2005, 10=2008/R2, 11=2012, 12=2014, 13=2016, 14=2017, 15=2019, 16=2022
+
+### Changed
+- `adapter.NewSource` signature updated to accept `noLock bool` and `normalizeTurkish bool` parameters
+- `mssql.New` signature updated to accept `noLock bool` and `normalizeTurkish bool` parameters
+- Startup log now reports `[NoLock: true/false, NormalizeTurkish: true/false]` alongside source details
 
 ## [0.3.0] - 2026-02-16
 

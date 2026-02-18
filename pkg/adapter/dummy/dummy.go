@@ -79,3 +79,52 @@ func (d *DummyAdapter) ExecuteQuery(ctx context.Context, query string, args ...a
 		},
 	}, nil
 }
+
+// GetViews returns mock views for testing.
+func (d *DummyAdapter) GetViews(ctx context.Context) ([]core.ViewSchema, error) {
+	return []core.ViewSchema{
+		{
+			Name: "vw_customer_orders",
+			Columns: []core.ColumnInfo{
+				{Name: "user_id", DataType: "int", IsNullable: false, Description: "Customer user ID"},
+				{Name: "username", DataType: "varchar(50)", IsNullable: false, Description: "Customer username"},
+				{Name: "order_count", DataType: "int", IsNullable: false, Description: "Total number of orders"},
+				{Name: "total_spent", DataType: "decimal(10,2)", IsNullable: false, Description: "Total amount spent"},
+			},
+		},
+	}, nil
+}
+
+// GetProcedures returns mock stored procedures for testing.
+func (d *DummyAdapter) GetProcedures(ctx context.Context) ([]core.StoredProcedure, error) {
+	return []core.StoredProcedure{
+		{
+			Name:        "sp_GetUserOrders",
+			Description: "Retrieves all orders for a given user",
+			Parameters: []core.ProcParameter{
+				{Name: "@UserID", DataType: "int", Mode: "IN"},
+				{Name: "@StatusFilter", DataType: "varchar(20)", Mode: "IN"},
+			},
+		},
+		{
+			Name:        "sp_GetDailySummary",
+			Description: "Returns the daily sales summary for a date range",
+			Parameters: []core.ProcParameter{
+				{Name: "@StartDate", DataType: "datetime", Mode: "IN"},
+				{Name: "@EndDate", DataType: "datetime", Mode: "IN"},
+				{Name: "@TotalAmount", DataType: "decimal(18,2)", Mode: "OUT"},
+			},
+		},
+	}, nil
+}
+
+// ExecuteProcedure simulates stored procedure execution for testing.
+func (d *DummyAdapter) ExecuteProcedure(ctx context.Context, name string, params map[string]string) (*core.QueryResult, error) {
+	fmt.Fprintf(os.Stderr, "[DummyDB] Executing procedure: %s with params: %v\n", name, params)
+	return &core.QueryResult{
+		Columns: []string{"result"},
+		Rows: []map[string]any{
+			{"result": fmt.Sprintf("Procedure %s executed successfully (dummy)", name)},
+		},
+	}, nil
+}

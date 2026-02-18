@@ -81,6 +81,29 @@ func NewMCPServer(name, version string) *MCPServer {
 
 	s.AddPrompt(prompt, ms.handleSchemaPrompt)
 
+	// Add list_views tool
+	listViewsTool := mcp.NewTool("list_views",
+		mcp.WithDescription("Lists all database views in a source with their columns. Views are virtual tables based on stored queries."),
+		mcp.WithString("source_name", mcp.Required(), mcp.Description("The name of the database source")),
+	)
+	s.AddTool(listViewsTool, ms.handleListViews)
+
+	// Add list_procedures tool
+	listProcsTool := mcp.NewTool("list_procedures",
+		mcp.WithDescription("Lists all stored procedures in a database source with their parameters. Use 'execute_procedure' to run one."),
+		mcp.WithString("source_name", mcp.Required(), mcp.Description("The name of the database source")),
+	)
+	s.AddTool(listProcsTool, ms.handleListProcedures)
+
+	// Add execute_procedure tool
+	execProcTool := mcp.NewTool("execute_procedure",
+		mcp.WithDescription("Executes a stored procedure by name with optional parameters. Parameters are passed as a JSON object string. Only available on non-read-only sources."),
+		mcp.WithString("source_name", mcp.Required(), mcp.Description("The name of the database source")),
+		mcp.WithString("procedure_name", mcp.Required(), mcp.Description("The stored procedure name (e.g. 'sp_CiroHesapla')")),
+		mcp.WithString("params", mcp.Description(`Optional JSON object of parameter name/value pairs. Example: {"StartDate":"2024-01-01","Limit":"10"}`)),
+	)
+	s.AddTool(execProcTool, ms.handleExecuteProcedure)
+
 	return ms
 }
 
@@ -175,10 +198,60 @@ func (ms *MCPServer) LoadSchemas(ctx context.Context) error {
 
 			contextBuilder.WriteString("\n")
 		}
+
+		// Load and append views
+		views, err := entry.source.GetViews(ctx)
+		if err == nil && len(views) > 0 {
+			contextBuilder.WriteString("#### Views\n\n")
+			for _, v := range views {
+				contextBuilder.WriteString(fmt.Sprintf("### View: %s\n", v.Name))
+				if len(v.Columns) > 0 {
+					contextBuilder.WriteString("Columns:\n")
+					for _, col := range v.Columns {
+						nullable := ""
+						if col.IsNullable {
+							nullable = " (nullable)"
+						}
+						contextBuilder.WriteString(fmt.Sprintf("  - %s: %s%s\n", col.Name, col.DataType, nullable))
+					}
+				}
+				contextBuilder.WriteString("\n")
+			}
+		}
+
+		// Load and append stored procedures
+		procs, err := entry.source.GetProcedures(ctx)
+		if err == nil && len(procs) > 0 {
+			contextBuilder.WriteString("#### Stored Procedures\n\n")
+			contextBuilder.WriteString("(Use the 'execute_procedure' tool to call these)\n\n")
+			for _, p := range procs {
+				contextBuilder.WriteString(fmt.Sprintf("### Stored Procedure: %s\n", p.Name))
+				if p.Description != "" {
+					contextBuilder.WriteString(fmt.Sprintf("Description: %s\n", p.Description))
+				}
+				if len(p.Parameters) > 0 {
+					contextBuilder.WriteString("Parameters:\n")
+					for _, param := range p.Parameters {
+						contextBuilder.WriteString(fmt.Sprintf("  - %s (%s, %s)\n", param.Name, param.DataType, param.Mode))
+					}
+					// Build example usage hint
+					exampleParams := make([]string, 0, len(p.Parameters))
+					for _, param := range p.Parameters {
+						cleanName := strings.TrimPrefix(param.Name, "@")
+						exampleParams = append(exampleParams, fmt.Sprintf(`"%s":"<value>"`, cleanName))
+					}
+					contextBuilder.WriteString(fmt.Sprintf("Example: execute_procedure source_name='%s' procedure_name='%s' params='{%s}'\n",
+						name, p.Name, strings.Join(exampleParams, ", ")))
+				}
+				contextBuilder.WriteString("\n")
+			}
+		}
 	}
 
 	contextBuilder.WriteString("\n=== END OF SCHEMA CONTEXT ===\n")
 	contextBuilder.WriteString("\nUse the 'query_database' tool to execute SQL queries on these sources.\n")
+	contextBuilder.WriteString("Use the 'list_views' tool to list views and 'list_procedures' to list stored procedures.\n")
+	contextBuilder.WriteString("Use the 'execute_procedure' tool to run a stored procedure (non-read-only sources only).\n")
 
 	ms.schemaContext = contextBuilder.String()
 	return nil
@@ -433,6 +506,141 @@ func (ms *MCPServer) handleDescribeTable(ctx context.Context, request mcp.CallTo
 	}
 
 	return mcp.NewToolResultText(result.String()), nil
+}
+
+func (ms *MCPServer) handleListViews(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	sourceName, err := request.RequireString("source_name")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	entry, exists := ms.sources[sourceName]
+	if !exists {
+		return mcp.NewToolResultError(fmt.Sprintf("Source not found: %s", sourceName)), nil
+	}
+
+	views, err := entry.source.GetViews(ctx)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to list views: %v", err)), nil
+	}
+
+	if len(views) == 0 {
+		return mcp.NewToolResultText(fmt.Sprintf("No views found in source '%s'.", sourceName)), nil
+	}
+
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("# Views in %s\n\n", sourceName))
+
+	for _, v := range views {
+		result.WriteString(fmt.Sprintf("## %s\n", v.Name))
+		if len(v.Columns) > 0 {
+			result.WriteString("| Column | Type | Nullable |\n")
+			result.WriteString("|--------|------|----------|\n")
+			for _, col := range v.Columns {
+				nullable := "NO"
+				if col.IsNullable {
+					nullable = "YES"
+				}
+				result.WriteString(fmt.Sprintf("| %s | %s | %s |\n", col.Name, col.DataType, nullable))
+			}
+		}
+		result.WriteString("\n")
+	}
+
+	return mcp.NewToolResultText(result.String()), nil
+}
+
+func (ms *MCPServer) handleListProcedures(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	sourceName, err := request.RequireString("source_name")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	entry, exists := ms.sources[sourceName]
+	if !exists {
+		return mcp.NewToolResultError(fmt.Sprintf("Source not found: %s", sourceName)), nil
+	}
+
+	procs, err := entry.source.GetProcedures(ctx)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to list procedures: %v", err)), nil
+	}
+
+	if len(procs) == 0 {
+		return mcp.NewToolResultText(fmt.Sprintf("No stored procedures found in source '%s'.", sourceName)), nil
+	}
+
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("# Stored Procedures in %s\n\n", sourceName))
+
+	for _, p := range procs {
+		result.WriteString(fmt.Sprintf("## %s\n", p.Name))
+		if p.Description != "" {
+			result.WriteString(fmt.Sprintf("*%s*\n\n", p.Description))
+		}
+		if len(p.Parameters) > 0 {
+			result.WriteString("| Parameter | Type | Mode |\n")
+			result.WriteString("|-----------|------|------|\n")
+			for _, param := range p.Parameters {
+				result.WriteString(fmt.Sprintf("| %s | %s | %s |\n", param.Name, param.DataType, param.Mode))
+			}
+			// Build example call hint
+			exampleParams := make([]string, 0, len(p.Parameters))
+			for _, param := range p.Parameters {
+				cleanName := strings.TrimPrefix(param.Name, "@")
+				exampleParams = append(exampleParams, fmt.Sprintf(`"%s":"<value>"`, cleanName))
+			}
+			result.WriteString(fmt.Sprintf("\n**Example call:** `execute_procedure source_name='%s' procedure_name='%s' params='{%s}'`\n",
+				sourceName, p.Name, strings.Join(exampleParams, ", ")))
+		} else {
+			result.WriteString(fmt.Sprintf("\n**Example call:** `execute_procedure source_name='%s' procedure_name='%s'`\n", sourceName, p.Name))
+		}
+		result.WriteString("\n")
+	}
+
+	return mcp.NewToolResultText(result.String()), nil
+}
+
+func (ms *MCPServer) handleExecuteProcedure(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	sourceName, err := request.RequireString("source_name")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	procName, err := request.RequireString("procedure_name")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	entry, exists := ms.sources[sourceName]
+	if !exists {
+		return mcp.NewToolResultError(fmt.Sprintf("Source not found: %s", sourceName)), nil
+	}
+
+	if entry.readOnly {
+		return mcp.NewToolResultError(fmt.Sprintf("Source '%s' is read-only; stored procedure execution is not permitted", sourceName)), nil
+	}
+
+	// Parse optional params JSON
+	params := make(map[string]string)
+	paramsJSON := request.GetString("params", "")
+	if paramsJSON != "" {
+		if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid params JSON: %v", err)), nil
+		}
+	}
+
+	result, err := entry.source.ExecuteProcedure(ctx, procName, params)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Procedure execution failed: %v", err)), nil
+	}
+
+	jsonResult, err := json.MarshalIndent(result.Rows, "", "  ")
+	if err != nil {
+		return mcp.NewToolResultError("Failed to marshal result"), nil
+	}
+
+	return mcp.NewToolResultText(string(jsonResult)), nil
 }
 
 func (ms *MCPServer) handleSchemaPrompt(ctx context.Context, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {

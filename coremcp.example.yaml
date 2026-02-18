@@ -24,6 +24,10 @@ sources:
   #   type: "mssql"
   #   dsn: "sqlserver://username:password@localhost:1433?database=mydb&encrypt=disable"
   #   readonly: true
+  #   no_lock: true          # Use READ UNCOMMITTED isolation (equivalent to WITH (NOLOCK))
+  #   normalize_turkish: true # Normalize Turkish chars in SQL literals for legacy Turkish_CI_AS databases
+  #                            # Converts 'Hüseyin' → 'HUSEYIN', 'şeker' → 'SEKER' inside WHERE clauses
+  #                            # Also fixes Windows-1254 / Windows-1252 mojibake in result strings
 
   # Example: Firebird (not implemented yet)
   # - name: "legacy_db"

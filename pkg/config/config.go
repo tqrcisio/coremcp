@@ -50,10 +50,12 @@ type LoggingConfig struct {
 }
 
 type SourceConfig struct {
-	Name     string `mapstructure:"name"`
-	Type     string `mapstructure:"type"` // mssql, firebird, postgres
-	DSN      string `mapstructure:"dsn"`  // Data Source Name (Connection String)
-	ReadOnly bool   `mapstructure:"readonly"`
+	Name             string `mapstructure:"name"`
+	Type             string `mapstructure:"type"` // mssql, firebird, postgres
+	DSN              string `mapstructure:"dsn"`  // Data Source Name (Connection String)
+	ReadOnly         bool   `mapstructure:"readonly"`
+	NoLock           bool   `mapstructure:"no_lock"`           // MSSQL: Use READ UNCOMMITTED isolation (equivalent to WITH (NOLOCK))
+	NormalizeTurkish bool   `mapstructure:"normalize_turkish"` // Normalize Turkish chars in SQL literals (for legacy Turkish_CI_AS databases)
 }
 
 // CustomToolConfig defines a custom MCP tool with a predefined query.

@@ -16,6 +16,7 @@ CoreMCP by CoreBaseHQ provides a secure, extensible bridge between AI assistants
 - 📝 **Column Comments Support**: Extracts and presents database column comments/descriptions to the AI for better query understanding
 - 🛠️ **Dynamic Tool Generation**: Built-in tools for common operations (list tables, describe schema) plus custom tool support
 - 🎯 **Custom Query Tools**: Define reusable SQL queries as MCP tools in your config file
+- 🛡️ **NOLOCK / Read Uncommitted**: Per-source option to run all SELECT queries under `READ UNCOMMITTED` isolation (MSSQL `WITH (NOLOCK)` equivalent) for zero-locking reads on busy OLTP databases
 - 🛡️ **Secure**: Read-only mode support, connection string isolation
 - 🎯 **MCP Native**: Built specifically for Model Context Protocol
 - 🔧 **Easy Configuration**: Simple YAML-based setup
@@ -60,6 +61,8 @@ sources:
     type: "mssql"
     dsn: "sqlserver://username:password@localhost:1433?database=mydb&encrypt=disable"
     readonly: true
+    no_lock: true            # Optional: READ UNCOMMITTED isolation (WITH (NOLOCK) equivalent)
+    normalize_turkish: true  # Optional: Turkish character normalization for legacy ERP databases
 ```
 
 See [coremcp.example.yaml](coremcp.example.yaml) for more examples.
@@ -109,6 +112,56 @@ security:
 - **Automatic Row Limiting**: Adds LIMIT clause to prevent accidentally returning millions of rows
 - **PII Data Masking**: Automatically masks sensitive data like credit cards, emails, SSNs, Turkish IDs, IBANs
 - **Configurable Patterns**: Define custom regex patterns for your specific PII requirements
+
+### Source Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `name` | string | — | Unique source identifier |
+| `type` | string | — | Adapter type: `mssql`, `dummy` |
+| `dsn` | string | — | Connection string |
+| `readonly` | bool | `false` | Restrict to SELECT-only at the config level |
+| `no_lock` | bool | `false` | **(MSSQL only)** Run all SELECT queries under `READ UNCOMMITTED` transaction isolation level. Equivalent to adding `WITH (NOLOCK)` to every table reference. Eliminates shared lock acquisition, improving read throughput on busy OLTP databases. **Trade-off:** may return dirty (uncommitted) rows. |
+| `normalize_turkish` | bool | `false` | **(MSSQL only)** Enable Turkish character normalization middleware. **Outgoing:** Turkish chars inside SQL string literals are converted to ASCII uppercase before the query is sent (`'Hüseyin'` → `'HUSEYIN'`, `'Şeker'` → `'SEKER'`). **Incoming:** Windows-1254 / Windows-1252 mojibake in result strings is auto-corrected. Use this for legacy Turkish ERP databases with `Turkish_CI_AS` collation. |
+
+#### Example: MSSQL with NOLOCK enabled
+
+```yaml
+sources:
+  - name: "oltp_db"
+    type: "mssql"
+    dsn: "sqlserver://user:pass@localhost:1433?database=production&encrypt=disable"
+    readonly: true
+    no_lock: true
+```
+
+#### Example: Legacy Turkish ERP Database
+
+```yaml
+sources:
+  - name: "erp_db"
+    type: "mssql"
+    dsn: "sqlserver://user:pass@localhost:1433?database=LOGO&encrypt=disable"
+    readonly: true
+    no_lock: true           # Avoid locking on busy OLTP
+    normalize_turkish: true # AI can now search 'Hüseyin' and it matches 'HUSEYIN'
+```
+
+**How Turkish normalization works:**
+
+| AI sends | Normalized query (sent to DB) | Why |
+|----------|-------------------------------|-----|
+| `WHERE ADI = 'Hüseyin'` | `WHERE ADI = 'HUSEYIN'` | ERP stores names as uppercase ASCII |
+| `WHERE SEHIR LIKE '%şeker%'` | `WHERE SEHIR LIKE '%SEKER%'` | `Ş` → `S` |
+| `WHERE SEHIR = 'İstanbul'` | `WHERE SEHIR = 'ISTANBUL'` | `İ` → `I` |
+
+**Mojibake correction (incoming results):**
+
+| DB returns (garbled) | Fixed output | Cause |
+|----------------------|--------------|-------|
+| `GÐKHAN` | `GĞKHAN` | Win-1254 byte 0xD0 read as Win-1252 |
+| `ÝSTANBUL` | `İSTANBUL` | Win-1254 byte 0xDD read as Win-1252 |
+| `ÞEHİR` | `ŞEHİR` | Win-1254 byte 0xDE read as Win-1252 |
 
 ## 🎯 Usage
 
@@ -260,6 +313,49 @@ Shows detailed schema information for a specific table.
 - Foreign key relationships
 - Column descriptions/comments
 
+#### `list_views`
+
+Lists all views in a database with their column definitions.
+
+**Parameters:**
+- `source_name` (required): Name of the database source
+
+**Returns:** Each view with its column names, types, and nullability.
+
+#### `list_procedures`
+
+Lists all stored procedures in a database with parameter details.
+
+**Parameters:**
+- `source_name` (required): Name of the database source
+
+**Returns:** Each procedure with parameter names, types, modes (`IN`/`OUT`/`INOUT`) and a ready-to-copy example call.
+
+#### `execute_procedure`
+
+Executes a stored procedure by name with optional named parameters.
+> ⚠️ Only available on sources where `readonly: false`.
+
+**Parameters:**
+- `source_name` (required): Name of the database source
+- `procedure_name` (required): Stored procedure name (e.g. `sp_CiroHesapla`)
+- `params` (optional): JSON string of parameter name/value pairs
+
+**Security:**
+- Procedure name validated against `^[a-zA-Z_][a-zA-Z0-9_#@.]*$`
+- All values passed as named SQL parameters (`sql.Named`) — no string interpolation
+- Parameter names also validated (alphanumeric + underscore only)
+- Completely blocked when source is `readonly: true`
+
+**Example:**
+```json
+{
+  "source_name": "erp_db",
+  "procedure_name": "sp_CiroHesapla",
+  "params": "{\"StartDate\":\"2024-01-01\",\"EndDate\":\"2024-12-31\"}"
+}
+```
+
 ### Custom Tools
 
 You can define reusable SQL queries as custom MCP tools in your `coremcp.yaml`:
@@ -344,6 +440,9 @@ Apache License 2.0 - see [LICENSE](LICENSE) for details.
 - [x] **WebSocket Connect Mode** - Remote management via CoreBase Cloud 🎉
 - [x] **Auto-Reconnection Logic** - Resilient agent connections
 - [x] **Remote Configuration Sync** - Update database configs remotely
+- [x] **NOLOCK / Read Uncommitted** - Per-source zero-locking reads for MSSQL
+- [x] **Turkish Character Normalization** - SQL literal normalization + mojibake fix for legacy Turkish ERP databases
+- [x] **View & Stored Procedure Discovery** - `list_views`, `list_procedures`, `execute_procedure` tools; auto-included in schema context
 - [ ] PostgreSQL adapter
 - [ ] MySQL adapter
 - [ ] Firebird adapter (in progress)

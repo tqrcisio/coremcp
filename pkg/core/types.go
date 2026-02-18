@@ -14,10 +14,18 @@ type Source interface {
 	Connect(ctx context.Context) error
 	// Close closes the database connection.
 	Close(ctx context.Context) error
-	// GetSchema retrieves the database schema information.
+	// GetSchema retrieves the database table schema information.
 	GetSchema(ctx context.Context) ([]TableSchema, error)
+	// GetViews retrieves all views in the database.
+	GetViews(ctx context.Context) ([]ViewSchema, error)
+	// GetProcedures retrieves all stored procedures in the database.
+	GetProcedures(ctx context.Context) ([]StoredProcedure, error)
 	// ExecuteQuery runs a SQL query and returns the results.
 	ExecuteQuery(ctx context.Context, query string, args ...any) (*QueryResult, error)
+	// ExecuteProcedure executes a stored procedure by name with the given named parameters.
+	// The procedure name is validated before execution.
+	// Implementations may reject execution when the source is read-only.
+	ExecuteProcedure(ctx context.Context, name string, params map[string]string) (*QueryResult, error)
 }
 
 // TableSchema represents the structure of a database table.
@@ -48,4 +56,24 @@ type ForeignKey struct {
 type QueryResult struct {
 	Columns []string
 	Rows    []map[string]any // (column_name: value)
+}
+
+// ViewSchema represents a database view.
+type ViewSchema struct {
+	Name    string
+	Columns []ColumnInfo
+}
+
+// StoredProcedure represents a stored procedure in the database.
+type StoredProcedure struct {
+	Name        string
+	Parameters  []ProcParameter
+	Description string
+}
+
+// ProcParameter represents a parameter of a stored procedure.
+type ProcParameter struct {
+	Name     string // e.g. "@StartDate"
+	DataType string // e.g. "datetime"
+	Mode     string // "IN", "OUT", "INOUT"
 }

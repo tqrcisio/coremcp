@@ -42,7 +42,7 @@ var serveCmd = &cobra.Command{
 			cfg.Security.MaxRowLimit, cfg.Security.EnablePIIMasking)
 
 		for _, sourceCfg := range cfg.Sources {
-			src, err := adapter.NewSource(sourceCfg.Type, sourceCfg.DSN)
+			src, err := adapter.NewSource(sourceCfg.Type, sourceCfg.DSN, sourceCfg.NoLock, sourceCfg.NormalizeTurkish)
 			if err != nil {
 				log.Printf("ERROR: Failed to create source %s: %v\n", sourceCfg.Name, err)
 				continue
@@ -53,7 +53,7 @@ var serveCmd = &cobra.Command{
 			}
 
 			mcpSrv.AddSource(sourceCfg.Name, src, sourceCfg.ReadOnly)
-			log.Printf("Source ready: %s (%s) [ReadOnly: %v]", sourceCfg.Name, sourceCfg.Type, sourceCfg.ReadOnly)
+			log.Printf("Source ready: %s (%s) [ReadOnly: %v, NoLock: %v, NormalizeTurkish: %v]", sourceCfg.Name, sourceCfg.Type, sourceCfg.ReadOnly, sourceCfg.NoLock, sourceCfg.NormalizeTurkish)
 		}
 
 		// Load database schemas for AI context

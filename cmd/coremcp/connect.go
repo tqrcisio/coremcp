@@ -80,10 +80,12 @@ type ConfigSyncPayload struct {
 }
 
 type RemoteSource struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	DSN      string `json:"dsn"`
-	ReadOnly bool   `json:"read_only"`
+	Name             string `json:"name"`
+	Type             string `json:"type"`
+	DSN              string `json:"dsn"`
+	ReadOnly         bool   `json:"read_only"`
+	NoLock           bool   `json:"no_lock"`
+	NormalizeTurkish bool   `json:"normalize_turkish"`
 }
 
 type RemoteSecurity struct {
@@ -122,13 +124,14 @@ opening any inbound ports. Perfect for secure factory deployments!`,
 
 func init() {
 	connectCmd.Flags().StringP("server", "s", "", "CoreBase Cloud WebSocket URL (e.g., wss://api.corebase.com/ws/agent)")
-	connectCmd.Flags().StringP("token", "t", "", "Authentication token (e.g., sk_fabrika_123)")
-	connectCmd.Flags().StringP("agent-id", "a", "", "Agent ID (optional, auto-generated if not provided)")
+	connectCmd.Flags().StringP("token", "t", "", "Authentication token (e.g., sk_live_abc123...)")
+	connectCmd.Flags().StringP("agent-id", "a", "", "Agent ID (REQUIRED - get from agent creation)")
 	connectCmd.Flags().IntP("max-reconnect", "r", 10, "Maximum reconnection attempts (0 for infinite)")
 	connectCmd.Flags().DurationP("reconnect-delay", "d", 5*time.Second, "Delay between reconnection attempts")
 
 	_ = connectCmd.MarkFlagRequired("server")
 	_ = connectCmd.MarkFlagRequired("token")
+	_ = connectCmd.MarkFlagRequired("agent-id")
 
 	rootCmd.AddCommand(connectCmd)
 }
@@ -141,6 +144,11 @@ func runConnect(cmd *cobra.Command, args []string) error {
 	agentID, _ := cmd.Flags().GetString("agent-id")
 	maxReconnect, _ := cmd.Flags().GetInt("max-reconnect")
 	reconnectDelay, _ := cmd.Flags().GetDuration("reconnect-delay")
+
+	// Validate agent ID is provided
+	if agentID == "" {
+		return fmt.Errorf("agent-id is required - get it from agent creation endpoint")
+	}
 
 	// Validate WebSocket URL
 	u, err := url.Parse(serverURL)
@@ -158,11 +166,6 @@ func runConnect(cmd *cobra.Command, args []string) error {
 	hostname, err := os.Hostname()
 	if err != nil {
 		hostname = "unknown"
-	}
-
-	// Generate agent ID if not provided
-	if agentID == "" {
-		agentID = fmt.Sprintf("agent-%s-%d", hostname, time.Now().Unix())
 	}
 
 	// Create context with cancellation
@@ -377,10 +380,20 @@ func (c *ConnectClient) handleCommand(msg *WSMessage) {
 
 	switch cmdPayload.CommandType {
 	case CmdRunSQL:
-		result, err = c.executeSQL(cmdPayload.Source, cmdPayload.Query)
+		if cmdPayload.Source == "" {
+			err = fmt.Errorf("source name is required for SQL execution")
+		} else if cmdPayload.Query == "" {
+			err = fmt.Errorf("query is required for SQL execution")
+		} else {
+			result, err = c.executeSQL(cmdPayload.Source, cmdPayload.Query, cmdPayload.Params)
+		}
 
 	case CmdGetSchema:
-		result, err = c.getSchema(cmdPayload.Source)
+		if cmdPayload.Source == "" {
+			err = fmt.Errorf("source name is required for schema retrieval")
+		} else {
+			result, err = c.getSchema(cmdPayload.Source)
+		}
 
 	case CmdListSources:
 		result = c.listSources()
@@ -401,14 +414,18 @@ func (c *ConnectClient) handleCommand(msg *WSMessage) {
 
 	// Send response
 	if err != nil {
-		log.Printf("[ERROR] Command execution failed: %v", err)
+		log.Printf("[ERROR] Command %s execution failed: %v", cmdPayload.CommandType, err)
 		if sendErr := c.sendError(msg.ID, err.Error()); sendErr != nil {
-			log.Printf("[WARN] Failed to send error response: %v", sendErr)
+			log.Printf("[ERROR] Failed to send error response for command %s: %v", msg.ID, sendErr)
+		} else {
+			log.Printf("[INFO] Error response sent successfully for command %s", msg.ID)
 		}
 	} else {
-		log.Printf("[INFO] Command executed successfully")
+		log.Printf("[SUCCESS] Command %s executed successfully", cmdPayload.CommandType)
 		if sendErr := c.sendResponse(msg.ID, result); sendErr != nil {
-			log.Printf("[WARN] Failed to send response: %v", sendErr)
+			log.Printf("[ERROR] Failed to send success response for command %s: %v", msg.ID, sendErr)
+		} else {
+			log.Printf("[INFO] Success response sent for command %s (size: %d bytes)", msg.ID, len(fmt.Sprintf("%v", result)))
 		}
 	}
 }
@@ -434,7 +451,7 @@ func (c *ConnectClient) handleConfigSync(msg *WSMessage) {
 
 	// Create new sources from remote config
 	for _, remoteSrc := range configPayload.Sources {
-		src, err := adapter.NewSource(remoteSrc.Type, remoteSrc.DSN)
+		src, err := adapter.NewSource(remoteSrc.Type, remoteSrc.DSN, remoteSrc.NoLock, remoteSrc.NormalizeTurkish)
 		if err != nil {
 			log.Printf("[ERROR] Failed to create source %s: %v", remoteSrc.Name, err)
 			continue
@@ -455,7 +472,7 @@ func (c *ConnectClient) handleConfigSync(msg *WSMessage) {
 	log.Println("[INFO] Configuration sync completed!")
 }
 
-func (c *ConnectClient) executeSQL(sourceName, query string) (interface{}, error) {
+func (c *ConnectClient) executeSQL(sourceName, query string, params map[string]interface{}) (interface{}, error) {
 	c.mu.RLock()
 	src, exists := c.sources[sourceName]
 	c.mu.RUnlock()
@@ -464,13 +481,32 @@ func (c *ConnectClient) executeSQL(sourceName, query string) (interface{}, error
 		return nil, fmt.Errorf("source not found: %s", sourceName)
 	}
 
-	// Execute query
-	result, err := src.ExecuteQuery(c.ctx, query, nil)
+	log.Printf("[INFO] Executing SQL on source '%s': %s", sourceName, query)
+	if len(params) > 0 {
+		log.Printf("[DEBUG] Query parameters: %v", params)
+	}
+
+	// Execute query with parameters
+	startTime := time.Now()
+	result, err := src.ExecuteQuery(c.ctx, query, params)
+	executionTime := time.Since(startTime)
+
 	if err != nil {
+		log.Printf("[ERROR] SQL execution failed after %v: %v", executionTime, err)
 		return nil, err
 	}
 
-	return result, nil
+	log.Printf("[INFO] SQL executed successfully in %v", executionTime)
+
+	// Format response with metadata
+	response := map[string]interface{}{
+		"data":           result,
+		"execution_time": executionTime.Milliseconds(),
+		"source":         sourceName,
+		"timestamp":      time.Now().Unix(),
+	}
+
+	return response, nil
 }
 
 func (c *ConnectClient) getSchema(sourceName string) (interface{}, error) {
@@ -482,13 +518,29 @@ func (c *ConnectClient) getSchema(sourceName string) (interface{}, error) {
 		return nil, fmt.Errorf("source not found: %s", sourceName)
 	}
 
+	log.Printf("[INFO] Retrieving schema for source '%s'", sourceName)
+
 	// Get schema
+	startTime := time.Now()
 	schema, err := src.GetSchema(c.ctx)
+	retrievalTime := time.Since(startTime)
+
 	if err != nil {
+		log.Printf("[ERROR] Schema retrieval failed after %v: %v", retrievalTime, err)
 		return nil, err
 	}
 
-	return schema, nil
+	log.Printf("[INFO] Schema retrieved successfully in %v", retrievalTime)
+
+	// Format response with metadata
+	response := map[string]interface{}{
+		"schema":         schema,
+		"retrieval_time": retrievalTime.Milliseconds(),
+		"source":         sourceName,
+		"timestamp":      time.Now().Unix(),
+	}
+
+	return response, nil
 }
 
 func (c *ConnectClient) listSources() map[string]interface{} {

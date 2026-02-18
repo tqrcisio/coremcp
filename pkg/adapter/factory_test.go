@@ -5,7 +5,7 @@ import (
 )
 
 func TestNewSource_Dummy(t *testing.T) {
-	src, err := NewSource("dummy", "dummy://test")
+	src, err := NewSource("dummy", "dummy://test", false, false)
 
 	if err != nil {
 		t.Fatalf("NewSource() failed: %v", err)
@@ -22,7 +22,7 @@ func TestNewSource_Dummy(t *testing.T) {
 
 func TestNewSource_MSSQL(t *testing.T) {
 	dsn := "sqlserver://user:pass@localhost:1433?database=test"
-	src, err := NewSource("mssql", dsn)
+	src, err := NewSource("mssql", dsn, false, false)
 
 	if err != nil {
 		t.Fatalf("NewSource() failed: %v", err)
@@ -38,15 +38,49 @@ func TestNewSource_MSSQL(t *testing.T) {
 }
 
 func TestNewSource_Unsupported(t *testing.T) {
-	_, err := NewSource("unsupported_db", "some://dsn")
+	_, err := NewSource("unsupported_db", "some://dsn", false, false)
 
 	if err == nil {
 		t.Error("Expected error for unsupported database type")
 	}
 }
 
+func TestNewSource_MSSQL_NoLock(t *testing.T) {
+	dsn := "sqlserver://user:pass@localhost:1433?database=test"
+	src, err := NewSource("mssql", dsn, true, false)
+
+	if err != nil {
+		t.Fatalf("NewSource() with noLock=true failed: %v", err)
+	}
+
+	if src == nil {
+		t.Fatal("Expected source, got nil")
+	}
+
+	if src.Name() != "MSSQL" {
+		t.Errorf("Expected 'MSSQL', got '%s'", src.Name())
+	}
+}
+
+func TestNewSource_MSSQL_NormalizeTurkish(t *testing.T) {
+	dsn := "sqlserver://user:pass@localhost:1433?database=test"
+	src, err := NewSource("mssql", dsn, false, true)
+
+	if err != nil {
+		t.Fatalf("NewSource() with normalizeTurkish=true failed: %v", err)
+	}
+
+	if src == nil {
+		t.Fatal("Expected source, got nil")
+	}
+
+	if src.Name() != "MSSQL" {
+		t.Errorf("Expected 'MSSQL', got '%s'", src.Name())
+	}
+}
+
 func TestNewSource_Firebird(t *testing.T) {
-	_, err := NewSource("firebird", "firebird://test")
+	_, err := NewSource("firebird", "firebird://test", false, false)
 
 	if err == nil {
 		t.Error("Expected error for unimplemented Firebird adapter")
