@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-02-18
+
+### Fixed
+- **Config file not found when running outside project directory:** `LoadConfig` was passing the
+  `--config` value to `viper.AddConfigPath()` which treats it as a *directory* path. When Claude
+  Desktop (or any caller) passes a full file path such as `/home/user/coremcp/coremcp.yaml`, Viper
+  failed to locate the file and silently fell back to the built-in dummy source.
+  - `LoadConfig` now uses `os.Stat` to distinguish between a file path and a directory path:
+    - **Full file path** → `viper.SetConfigFile(abs)` — exact load, working-directory independent
+    - **Directory path** → `viper.AddConfigPath(dir)` — searches for `coremcp.yaml` inside that directory
+    - **Default (no `--config`)** → searches the directory of the running binary first, then CWD
+  - The default value of the `--config` flag is now computed at startup via `defaultConfigPath()`,
+    which checks for `coremcp.yaml` next to the binary before falling back to `"coremcp.yaml"` (CWD-relative)
+- **Single source failure crashing the entire server:** A failed `Connect()` call on one database
+  source triggered `log.Fatalf`, killing the process before any tools were registered. Changed to
+  `log.Printf` + `continue` so other sources remain available when one is unreachable.
+
 ## [0.4.0] - 2026-02-18
 
 ### Added

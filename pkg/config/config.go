@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -80,12 +81,33 @@ type ToolParameter struct {
 // The path parameter can be a directory or a full file path.
 func LoadConfig(path string) (*Config, error) {
 	v := viper.New()
+	v.SetConfigType("yaml")
 
-	// File Settings
-	v.SetConfigName("coremcp") // File Name (without extension)
-	v.SetConfigType("yaml")    // File Type
-	v.AddConfigPath(".")       // Current directory
-	v.AddConfigPath(path)      // Specified path (e.g., /etc/coremcp/)
+	// Determine whether `path` is a full file path or a directory.
+	// When a full file path is given (e.g. /home/yiit/coremcp/coremcp.yaml),
+	// set the config file directly so Viper doesn't rely on CWD resolution.
+	if path != "" && path != "coremcp.yaml" {
+		abs, err := filepath.Abs(path)
+		if err == nil {
+			info, statErr := os.Stat(abs)
+			if statErr == nil && !info.IsDir() {
+				// Full file path — tell Viper exactly which file to use.
+				v.SetConfigFile(abs)
+			} else {
+				// It's a directory — add it as a search path.
+				v.SetConfigName("coremcp")
+				v.AddConfigPath(abs)
+			}
+		}
+	} else {
+		// Default: search for coremcp.yaml relative to CWD,
+		// then the directory of the running binary.
+		v.SetConfigName("coremcp")
+		v.AddConfigPath(".")
+		if exe, err := os.Executable(); err == nil {
+			v.AddConfigPath(filepath.Dir(exe))
+		}
+	}
 
 	// Environment Variables
 	v.SetEnvPrefix("COREMCP")

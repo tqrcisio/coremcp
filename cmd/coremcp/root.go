@@ -2,12 +2,25 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 
 	"github.com/corebasehq/coremcp/pkg/config"
 	"github.com/spf13/cobra"
 )
 
 var cfg *config.Config
+
+// defaultConfigPath returns the path to coremcp.yaml next to the running binary.
+// Falls back to the plain filename (CWD-relative) if the executable path cannot be determined.
+func defaultConfigPath() string {
+	if exe, err := os.Executable(); err == nil {
+		candidate := filepath.Join(filepath.Dir(exe), "coremcp.yaml")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return "coremcp.yaml"
+}
 
 var rootCmd = &cobra.Command{
 	Use:   "coremcp",
@@ -37,5 +50,5 @@ func Execute() {
 
 func init() {
 	// Global flags here
-	rootCmd.PersistentFlags().StringP("config", "c", "coremcp.yaml", "config file path")
+	rootCmd.PersistentFlags().StringP("config", "c", defaultConfigPath(), "config file path")
 }

@@ -49,7 +49,8 @@ var serveCmd = &cobra.Command{
 			}
 
 			if err := src.Connect(cmd.Context()); err != nil {
-				log.Fatalf("CRITICAL: Failed to connect to database %s: %v", sourceCfg.Name, err)
+				log.Printf("ERROR: Failed to connect to database %s: %v — skipping source", sourceCfg.Name, err)
+				continue
 			}
 
 			mcpSrv.AddSource(sourceCfg.Name, src, sourceCfg.ReadOnly)
