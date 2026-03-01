@@ -27,8 +27,9 @@ WORKDIR /app
 # Copy binary from builder
 COPY --from=builder /build/coremcp .
 
-# Copy example config
+# Copy example config and use it as the default config
 COPY coremcp.example.yaml /app/coremcp.example.yaml
+COPY coremcp.example.yaml /app/coremcp.yaml
 
 # Create non-root user
 RUN addgroup -g 1000 coremcp && \
