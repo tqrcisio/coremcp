@@ -19,7 +19,7 @@ sources:
     dsn: "dummy://test"
     readonly: true
 
-  # Example: Microsoft SQL Server (modern — 2012 or newer)
+  # Example: Microsoft SQL Server (modern - 2012 or newer)
   # - name: "production_db"
   #   type: "mssql"
   #   dsn: "sqlserver://username:password@localhost:1433?database=mydb&encrypt=disable"
@@ -32,15 +32,15 @@ sources:
   # Example: Legacy Turkish ERP (SQL Server 2000 / 2008 with Turkish_CI_AS collation)
   # CoreMCP auto-detects the SQL Server version on connect and adapts queries:
   #   - SQL Server 2000: uses sysobjects / sysforeignkeys instead of sys.* views
-  #   - SQL Server 2008 and older: rewrites OFFSET FETCH → SELECT TOP N automatically
-  #   - All versions: rewrites LIMIT N → SELECT TOP N (T-SQL compatibility)
+  #   - SQL Server 2008 and older: rewrites OFFSET FETCH to SELECT TOP N automatically
+  #   - All versions: rewrites LIMIT N to SELECT TOP N (T-SQL compatibility)
   # - name: "erp_db"
   #   type: "mssql"
   #   dsn: "sqlserver://sa:password@192.168.1.10:1433?database=ERPDB&encrypt=disable"
   #   readonly: false          # Set false to allow execute_procedure tool
   #   no_lock: true            # Avoid locking on busy OLTP
   #   normalize_turkish: true  # Normalize Turkish chars in SQL literals for legacy Turkish_CI_AS databases
-  #                            # Outgoing: 'Hüseyin' → 'HUSEYIN', 'şeker' → 'SEKER' inside WHERE clauses
+  #                            # Outgoing: 'Huseyin' to 'HUSEYIN', 'seker' to 'SEKER' inside WHERE clauses
   #                            # Incoming: auto-corrects Windows-1254 / Windows-1252 mojibake in results
 
   # Example: Firebird (not implemented yet)
@@ -53,13 +53,13 @@ sources:
 # MSSQL:  sqlserver://username:password@host:port?database=dbname&encrypt=disable
 # Dummy:  dummy://anything
 #
-# MSSQL Version Support (auto-detected — no manual config required):
-#   SQL Server 2000  (v8)  — sysobjects/sysforeignkeys; no column descriptions
-#   SQL Server 2005  (v9)  — INFORMATION_SCHEMA + sys.* views; column descriptions via sys.extended_properties
-#   SQL Server 2008  (v10) — same as 2005; OFFSET FETCH not supported (auto-rewritten to TOP)
-#   SQL Server 2012+ (v11) — full support including OFFSET FETCH pagination
-#   SQL Server 2019  (v15) — full support
-#   SQL Server 2022  (v16) — full support
+# MSSQL Version Support (auto-detected - no manual config required):
+#   SQL Server 2000  (v8)  - sysobjects/sysforeignkeys; no column descriptions
+#   SQL Server 2005  (v9)  - INFORMATION_SCHEMA + sys.* views; column descriptions via sys.extended_properties
+#   SQL Server 2008  (v10) - same as 2005; OFFSET FETCH not supported (auto-rewritten to TOP)
+#   SQL Server 2012+ (v11) - full support including OFFSET FETCH pagination
+#   SQL Server 2019  (v15) - full support
+#   SQL Server 2022  (v16) - full support
 
 # Security configuration
 security:
@@ -105,12 +105,12 @@ security:
 # Custom tools configuration (optional)
 # Define reusable SQL queries as MCP tools.
 # In addition to these, the following built-in tools are always available:
-#   query_database    — execute any SQL query
-#   list_tables       — list all tables with column counts
-#   describe_table    — show full schema of a table (columns, PKs, FKs, descriptions)
-#   list_views        — list all views with their columns
-#   list_procedures   — list all stored procedures with parameters
-#   execute_procedure — run a stored procedure (requires readonly: false on the source)
+#   query_database    - execute any SQL query
+#   list_tables       - list all tables with column counts
+#   describe_table    - show full schema of a table (columns, PKs, FKs, descriptions)
+#   list_views        - list all views with their columns
+#   list_procedures   - list all stored procedures with parameters
+#   execute_procedure - run a stored procedure (requires readonly: false on the source)
 custom_tools:
   # Example: Get daily sales summary
   - name: "get_daily_sales"
