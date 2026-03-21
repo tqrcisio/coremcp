@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/corebasehq/coremcp/pkg/adapter"
 	"github.com/corebasehq/coremcp/pkg/config"
@@ -57,13 +58,17 @@ var serveCmd = &cobra.Command{
 			log.Printf("Source ready: %s (%s) [ReadOnly: %v, NoLock: %v, NormalizeTurkish: %v]", sourceCfg.Name, sourceCfg.Type, sourceCfg.ReadOnly, sourceCfg.NoLock, sourceCfg.NormalizeTurkish)
 		}
 
-		// Load database schemas for AI context
-		log.Println("Loading database schemas for AI context...")
-		if err := mcpSrv.LoadSchemas(cmd.Context()); err != nil {
-			log.Printf("WARNING: Failed to load schemas: %v", err)
-		} else {
-			log.Println("Database schemas loaded successfully!")
-		}
+		// Load database schemas for AI context in background
+		// so the MCP server can respond to initialize immediately
+		go func() {
+			log.Println("Loading database schemas for AI context (background)...")
+			time.Sleep(500 * time.Millisecond) // let stdio start first
+			if err := mcpSrv.LoadSchemas(cmd.Context()); err != nil {
+				log.Printf("WARNING: Failed to load schemas: %v", err)
+			} else {
+				log.Println("Database schemas loaded successfully!")
+			}
+		}()
 
 		// Register custom tools from config
 		if len(cfg.CustomTools) > 0 {
