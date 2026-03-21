@@ -435,7 +435,11 @@ func (m *MSSQLAdapter) adaptQueryForVersion(query string) string {
 // or is not a SELECT statement (INSERT/UPDATE/DELETE are left as-is).
 func convertLimitToTop(query string) string {
 	if hasTopRe.MatchString(query) {
-		return query // already has TOP — leave untouched
+		// already has TOP — strip any spurious LIMIT appended by QueryModifier
+		if m := limitClauseRe.FindStringSubmatch(query); m != nil {
+			return strings.TrimSpace(m[1])
+		}
+		return query
 	}
 	m := limitClauseRe.FindStringSubmatch(query)
 	if m == nil {
