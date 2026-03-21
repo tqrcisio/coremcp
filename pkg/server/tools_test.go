@@ -168,6 +168,86 @@ func getResultText(result *mcp.CallToolResult) string {
 	return ""
 }
 
+func TestCustomToolRouting(t *testing.T) {
+	mcpSrv := NewMCPServer("test-server", "1.0.0")
+
+	src, _ := dummy.New("dummy://test")
+	if err := src.Connect(context.Background()); err != nil {
+		t.Fatalf("Failed to connect source: %v", err)
+	}
+	mcpSrv.AddSource("test_db", src, true)
+
+	// Register two tools that share a parameter name — routing must not confuse them.
+	if err := mcpSrv.AddCustomTool("tool_a", "Tool A", "test_db",
+		"SELECT * FROM orders WHERE user_id = {{id}}", []string{"id"}); err != nil {
+		t.Fatalf("AddCustomTool tool_a failed: %v", err)
+	}
+	if err := mcpSrv.AddCustomTool("tool_b", "Tool B", "test_db",
+		"SELECT * FROM users WHERE id = {{id}}", []string{"id"}); err != nil {
+		t.Fatalf("AddCustomTool tool_b failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Call tool_a and verify it runs the orders query
+	reqA := mcp.CallToolRequest{}
+	reqA.Params.Arguments = map[string]interface{}{"id": "1"}
+	resultA, err := mcpSrv.handleNamedCustomTool(ctx, reqA, "tool_a")
+	if err != nil {
+		t.Fatalf("handleNamedCustomTool tool_a error: %v", err)
+	}
+	if resultA == nil {
+		t.Fatal("tool_a result is nil")
+	}
+
+	// Call tool_b and verify it runs the users query
+	reqB := mcp.CallToolRequest{}
+	reqB.Params.Arguments = map[string]interface{}{"id": "2"}
+	resultB, err := mcpSrv.handleNamedCustomTool(ctx, reqB, "tool_b")
+	if err != nil {
+		t.Fatalf("handleNamedCustomTool tool_b error: %v", err)
+	}
+	if resultB == nil {
+		t.Fatal("tool_b result is nil")
+	}
+}
+
+func TestCustomToolSQLInjectionBlocked(t *testing.T) {
+	mcpSrv := NewMCPServer("test-server", "1.0.0")
+
+	src, _ := dummy.New("dummy://test")
+	if err := src.Connect(context.Background()); err != nil {
+		t.Fatalf("Failed to connect source: %v", err)
+	}
+	mcpSrv.AddSource("test_db", src, true)
+
+	if err := mcpSrv.AddCustomTool("get_user", "Get user", "test_db",
+		"SELECT * FROM users WHERE id = {{id}}", []string{"id"}); err != nil {
+		t.Fatalf("AddCustomTool failed: %v", err)
+	}
+
+	injections := []string{
+		"1; DROP TABLE users",
+		"1' OR '1'='1",
+		"1 -- comment",
+		"1 /* block */",
+	}
+
+	ctx := context.Background()
+	for _, payload := range injections {
+		req := mcp.CallToolRequest{}
+		req.Params.Arguments = map[string]interface{}{"id": payload}
+		result, err := mcpSrv.handleNamedCustomTool(ctx, req, "get_user")
+		if err != nil {
+			t.Fatalf("unexpected Go error for payload %q: %v", payload, err)
+		}
+		text := getResultText(result)
+		if !strings.Contains(text, "Invalid parameter") && !strings.Contains(text, "disallowed") {
+			t.Errorf("SQL injection payload %q was not blocked, got: %s", payload, text)
+		}
+	}
+}
+
 func TestHandleListViews(t *testing.T) {
 	mcpSrv := NewMCPServer("test-server", "1.0.0")
 

@@ -212,6 +212,12 @@ func TestQueryModifier_AddRowLimit(t *testing.T) {
 			expectLimit:  true,
 			maxRowsInSQL: 100,
 		},
+		{
+			name:         "Override excessive LIMIT",
+			query:        "SELECT * FROM users LIMIT 9999999",
+			expectLimit:  true,
+			maxRowsInSQL: 100, // excessive limit should be overridden to 100
+		},
 	}
 
 	for _, tt := range tests {
@@ -230,6 +236,23 @@ func TestQueryModifier_AddRowLimit(t *testing.T) {
 			t.Logf("Original: %s", tt.query)
 			t.Logf("Modified: %s", result)
 		})
+	}
+}
+
+func TestQueryModifier_OverrideExcessiveLimit(t *testing.T) {
+	modifier := NewQueryModifier(100)
+
+	result, err := modifier.AddRowLimit("SELECT * FROM users LIMIT 9999999")
+	if err != nil {
+		t.Fatalf("AddRowLimit() error = %v", err)
+	}
+
+	// The excessive limit must be capped at 100
+	if strings.Contains(result, "9999999") {
+		t.Errorf("Excessive LIMIT was not overridden, got: %s", result)
+	}
+	if !strings.Contains(strings.ToUpper(result), "LIMIT") {
+		t.Errorf("Result should contain LIMIT: %s", result)
 	}
 }
 

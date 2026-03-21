@@ -4,6 +4,7 @@ package security
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/xwb1989/sqlparser"
@@ -241,16 +242,18 @@ func (qm *QueryModifier) AddRowLimit(query string) (string, error) {
 
 	switch s := stmt.(type) {
 	case *sqlparser.Select:
-		// Check if LIMIT already exists
-		if s.Limit != nil {
-			// Limit already exists, verify it's not too large
-			if s.Limit.Rowcount != nil {
-				// Query already has a limit, keep it if it's reasonable
-				return query, nil
+		// If the query already has a LIMIT that is within the allowed maximum, keep it.
+		// If the existing limit exceeds the maximum, override it to prevent overload.
+		if s.Limit != nil && s.Limit.Rowcount != nil {
+			if limVal, ok := s.Limit.Rowcount.(*sqlparser.SQLVal); ok && limVal.Type == sqlparser.IntVal {
+				existing, err := strconv.Atoi(string(limVal.Val))
+				if err == nil && existing <= qm.maxRowLimit {
+					return query, nil
+				}
 			}
 		}
 
-		// Add LIMIT clause
+		// Add or override LIMIT clause
 		s.Limit = &sqlparser.Limit{
 			Rowcount: sqlparser.NewIntVal([]byte(fmt.Sprintf("%d", qm.maxRowLimit))),
 		}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/corebasehq/coremcp/pkg/adapter"
 	"github.com/corebasehq/coremcp/pkg/core"
+	"github.com/corebasehq/coremcp/pkg/security"
 	"github.com/gorilla/websocket"
 	"github.com/spf13/cobra"
 )
@@ -109,6 +110,8 @@ type ConnectClient struct {
 	maxReconnect   int
 	agentID        string
 	hostname       string
+	queryValidator *security.QueryValidator
+	queryModifier  *security.QueryModifier
 }
 
 var connectCmd = &cobra.Command{
@@ -186,6 +189,8 @@ func runConnect(cmd *cobra.Command, args []string) error {
 		maxReconnect:   maxReconnect,
 		agentID:        agentID,
 		hostname:       hostname,
+		queryValidator: security.NewQueryValidator(nil, nil),
+		queryModifier:  security.NewQueryModifier(1000),
 	}
 
 	fmt.Fprintf(os.Stderr, "[INFO] CoreMCP Connect Mode\n")
@@ -298,7 +303,7 @@ func (c *ConnectClient) connect() error {
 	authPayload := AuthPayload{
 		Token:    c.token,
 		AgentID:  c.agentID,
-		Version:  "v0.1.0", // TODO: Get from config or build info
+		Version:  Version,
 		Hostname: c.hostname,
 	}
 
@@ -439,6 +444,12 @@ func (c *ConnectClient) handleConfigSync(msg *WSMessage) {
 
 	log.Printf("[INFO] Syncing configuration: %d source(s)", len(configPayload.Sources))
 
+	// Update security components from remote config.
+	c.mu.Lock()
+	c.queryValidator = security.NewQueryValidator(configPayload.Security.AllowedKeywords, configPayload.Security.BlockedKeywords)
+	c.queryModifier = security.NewQueryModifier(configPayload.Security.MaxRowLimit)
+	c.mu.Unlock()
+
 	// Close existing sources
 	c.mu.Lock()
 	for name, src := range c.sources {
@@ -480,6 +491,21 @@ func (c *ConnectClient) executeSQL(sourceName, query string, params map[string]i
 	if !exists {
 		return nil, fmt.Errorf("source not found: %s", sourceName)
 	}
+
+	// Validate and rate-limit the query before execution.
+	c.mu.RLock()
+	validator := c.queryValidator
+	modifier := c.queryModifier
+	c.mu.RUnlock()
+
+	if err := validator.ValidateQuery(query); err != nil {
+		return nil, fmt.Errorf("query validation failed: %v", err)
+	}
+	modifiedQuery, err := modifier.AddRowLimit(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply row limit: %v", err)
+	}
+	query = modifiedQuery
 
 	log.Printf("[INFO] Executing SQL on source '%s': %s", sourceName, query)
 	if len(params) > 0 {

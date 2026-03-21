@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/corebasehq/coremcp/pkg/core"
@@ -14,15 +15,19 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
+// safeIdentifierRe matches safe SQL identifiers (procedure/object names).
+var safeIdentifierRe = regexp.MustCompile(`^[\w.\[\]]+$`)
+
 // MCPServer represents the MCP server instance that handles database queries.
 type MCPServer struct {
 	mcpServer      *server.MCPServer
 	sources        map[string]sourceEntry
-	schemaContext  string                     // Pre-built schema context for AI
-	customTools    map[string]customToolEntry // Custom tools from config
-	queryValidator *security.QueryValidator   // SQL query validator
-	piiMasker      *security.PIIMasker        // PII data masker
-	queryModifier  *security.QueryModifier    // Query modifier for row limits
+	schemaContext  string                        // Pre-built schema context for AI
+	customTools    map[string]customToolEntry    // Custom tools from config
+	tableSchemas   map[string][]core.TableSchema // Cached table schemas per source
+	queryValidator *security.QueryValidator      // SQL query validator
+	piiMasker      *security.PIIMasker           // PII data masker
+	queryModifier  *security.QueryModifier       // Query modifier for row limits
 }
 
 type customToolEntry struct {
@@ -46,6 +51,7 @@ func NewMCPServer(name, version string) *MCPServer {
 		sources:       make(map[string]sourceEntry),
 		schemaContext: "",
 		customTools:   make(map[string]customToolEntry),
+		tableSchemas:  make(map[string][]core.TableSchema),
 		// Security components will be initialized via ConfigureSecurity()
 		queryValidator: security.NewQueryValidator(nil, nil),
 		queryModifier:  security.NewQueryModifier(1000),
@@ -160,6 +166,9 @@ func (ms *MCPServer) LoadSchemas(ctx context.Context) error {
 			continue
 		}
 
+		// Cache schemas for use by describe_table without re-querying
+		ms.tableSchemas[name] = schemas
+
 		if len(schemas) == 0 {
 			contextBuilder.WriteString("No tables found.\n\n")
 			continue
@@ -264,13 +273,10 @@ func (ms *MCPServer) GetSchemaContext() string {
 
 // AddCustomTool registers a custom tool with a predefined query.
 func (ms *MCPServer) AddCustomTool(name, description, sourceName, query string, parameters []string) error {
-	// Build MCP tool with dynamic parameters
 	toolOptions := []mcp.ToolOption{
 		mcp.WithDescription(description),
-		mcp.WithString("source_name", mcp.Required(), mcp.Description("The database source (auto-filled)")),
 	}
 
-	// Add custom parameters
 	for _, param := range parameters {
 		toolOptions = append(toolOptions,
 			mcp.WithString(param, mcp.Required(), mcp.Description(fmt.Sprintf("Parameter: %s", param))))
@@ -278,70 +284,72 @@ func (ms *MCPServer) AddCustomTool(name, description, sourceName, query string, 
 
 	tool := mcp.NewTool(name, toolOptions...)
 
-	// Store tool info
 	ms.customTools[name] = customToolEntry{
 		sourceName: sourceName,
 		query:      query,
 		parameters: parameters,
 	}
 
-	// Register handler
-	ms.mcpServer.AddTool(tool, ms.handleCustomTool)
+	// Capture tool name in closure so each tool routes to the correct entry.
+	toolName := name
+	ms.mcpServer.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return ms.handleNamedCustomTool(ctx, req, toolName)
+	})
 
 	return nil
 }
 
-func (ms *MCPServer) handleCustomTool(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// Get tool name from request (this is a bit of a hack, but MCP doesn't expose tool name in request)
-	// We'll need to find which custom tool this is
-
-	// For now, we'll iterate through custom tools and try to match
-	for _, toolEntry := range ms.customTools {
-		// Check if all parameters for this tool are present
-		allParamsPresent := true
-		paramValues := make(map[string]string)
-
-		for _, param := range toolEntry.parameters {
-			val, err := request.RequireString(param)
-			if err != nil {
-				allParamsPresent = false
-				break
-			}
-			paramValues[param] = val
+// sanitizeCustomToolParam rejects values that contain SQL injection patterns.
+func sanitizeCustomToolParam(value string) (string, error) {
+	dangerous := []string{"'", ";", "--", "/*", "*/"}
+	for _, pattern := range dangerous {
+		if strings.Contains(value, pattern) {
+			return "", fmt.Errorf("disallowed character sequence %q", pattern)
 		}
+	}
+	return value, nil
+}
 
-		if !allParamsPresent {
-			continue
-		}
-
-		// This is our tool!
-		entry, exists := ms.sources[toolEntry.sourceName]
-		if !exists {
-			return mcp.NewToolResultError(fmt.Sprintf("Source not found: %s", toolEntry.sourceName)), nil
-		}
-
-		// Replace parameters in query
-		query := toolEntry.query
-		for param, value := range paramValues {
-			// Simple string replacement (in production, use proper SQL parameter binding)
-			query = strings.ReplaceAll(query, fmt.Sprintf("{{%s}}", param), value)
-		}
-
-		// Execute query
-		result, err := entry.source.ExecuteQuery(ctx, query)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Query execution failed: %v", err)), nil
-		}
-
-		jsonResult, err := json.MarshalIndent(result.Rows, "", "  ")
-		if err != nil {
-			return mcp.NewToolResultError("Failed to marshal result"), nil
-		}
-
-		return mcp.NewToolResultText(string(jsonResult)), nil
+func (ms *MCPServer) handleNamedCustomTool(ctx context.Context, request mcp.CallToolRequest, toolName string) (*mcp.CallToolResult, error) {
+	toolEntry, exists := ms.customTools[toolName]
+	if !exists {
+		return mcp.NewToolResultError(fmt.Sprintf("Custom tool not found: %s", toolName)), nil
 	}
 
-	return mcp.NewToolResultError("Custom tool not found or parameters missing"), nil
+	entry, exists := ms.sources[toolEntry.sourceName]
+	if !exists {
+		return mcp.NewToolResultError(fmt.Sprintf("Source not found: %s", toolEntry.sourceName)), nil
+	}
+
+	paramValues := make(map[string]string)
+	for _, param := range toolEntry.parameters {
+		val, err := request.RequireString(param)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Missing required parameter: %s", param)), nil
+		}
+		sanitized, err := sanitizeCustomToolParam(val)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid parameter %q: %v", param, err)), nil
+		}
+		paramValues[param] = sanitized
+	}
+
+	query := toolEntry.query
+	for param, value := range paramValues {
+		query = strings.ReplaceAll(query, fmt.Sprintf("{{%s}}", param), value)
+	}
+
+	result, err := entry.source.ExecuteQuery(ctx, query)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Query execution failed: %v", err)), nil
+	}
+
+	jsonResult, err := json.MarshalIndent(result.Rows, "", "  ")
+	if err != nil {
+		return mcp.NewToolResultError("Failed to marshal result"), nil
+	}
+
+	return mcp.NewToolResultText(string(jsonResult)), nil
 }
 
 // StartStdio starts the MCP server using stdio transport.
@@ -450,9 +458,14 @@ func (ms *MCPServer) handleDescribeTable(ctx context.Context, request mcp.CallTo
 		return mcp.NewToolResultError(fmt.Sprintf("Source not found: %s", sourceName)), nil
 	}
 
-	schemas, err := entry.source.GetSchema(ctx)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to get schema: %v", err)), nil
+	// Use cached schemas when available to avoid reloading all tables on every call.
+	schemas, cached := ms.tableSchemas[sourceName]
+	if !cached {
+		var err error
+		schemas, err = entry.source.GetSchema(ctx)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to get schema: %v", err)), nil
+		}
 	}
 
 	// Find the requested table
@@ -619,6 +632,11 @@ func (ms *MCPServer) handleExecuteProcedure(ctx context.Context, request mcp.Cal
 
 	if entry.readOnly {
 		return mcp.NewToolResultError(fmt.Sprintf("Source '%s' is read-only; stored procedure execution is not permitted", sourceName)), nil
+	}
+
+	// Validate procedure name to prevent SQL injection.
+	if !safeIdentifierRe.MatchString(procName) {
+		return mcp.NewToolResultError("Invalid procedure name: only alphanumeric characters, underscores, dots, and brackets are allowed"), nil
 	}
 
 	// Parse optional params JSON
