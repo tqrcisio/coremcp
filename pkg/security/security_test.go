@@ -1,6 +1,8 @@
 package security
 
 import (
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -231,6 +233,20 @@ func TestQueryModifier_AddRowLimit(t *testing.T) {
 			resultUpper := strings.ToUpper(result)
 			if tt.expectLimit && !strings.Contains(resultUpper, "LIMIT") {
 				t.Errorf("Query should contain LIMIT: %v", result)
+			}
+
+			// Verify the numeric LIMIT value equals the expected cap.
+			if tt.expectLimit {
+				re := regexp.MustCompile(`(?i)\bLIMIT\s+(\d+)`)
+				m := re.FindStringSubmatch(result)
+				if m == nil {
+					t.Errorf("Could not parse LIMIT value from result: %s", result)
+				} else {
+					got, _ := strconv.Atoi(m[1])
+					if got != tt.maxRowsInSQL {
+						t.Errorf("LIMIT value = %d, want %d (query: %s)", got, tt.maxRowsInSQL, result)
+					}
+				}
 			}
 
 			t.Logf("Original: %s", tt.query)

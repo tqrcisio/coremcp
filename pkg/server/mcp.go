@@ -74,8 +74,10 @@ func validateAndCoerceParam(value, paramType string) (string, error) {
 			return "", fmt.Errorf("expected identifier (letters, digits, underscores only), got %q", value)
 		}
 		return trimmed, nil
-	default: // "string" or unset — escape single quotes for safe SQL string-literal interpolation
+	case "string", "": // Escape single quotes for safe SQL string-literal interpolation.
 		return strings.ReplaceAll(value, "'", "''"), nil
+	default: // Reject unknown/unsupported parameter types to avoid silently disabling validation.
+		return "", fmt.Errorf("unknown parameter type %q; supported types: integer, number, date, identifier, string", paramType)
 	}
 }
 
@@ -398,9 +400,28 @@ func (ms *MCPServer) handleNamedCustomTool(ctx context.Context, request mcp.Call
 		query = strings.ReplaceAll(query, fmt.Sprintf("{{%s}}", param), value)
 	}
 
-	result, err := entry.source.ExecuteQuery(ctx, query)
+	// Apply the same validation and row-limiting pipeline as the standard query handler.
+	if err := ms.queryValidator.ValidateQuery(query); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Query validation failed: %v", err)), nil
+	}
+
+	limitedQuery, err := ms.queryModifier.AddRowLimit(query)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to add row limit: %v", err)), nil
+	}
+
+	result, err := entry.source.ExecuteQuery(ctx, limitedQuery)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Query execution failed: %v", err)), nil
+	}
+
+	// Apply PII masking to results.
+	if ms.piiMasker != nil {
+		for i := range result.Rows {
+			for key, value := range result.Rows[i] {
+				result.Rows[i][key] = ms.piiMasker.MaskValue(value)
+			}
+		}
 	}
 
 	jsonResult, err := json.MarshalIndent(result.Rows, "", "  ")
