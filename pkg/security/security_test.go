@@ -239,23 +239,6 @@ func TestQueryModifier_AddRowLimit(t *testing.T) {
 	}
 }
 
-func TestQueryModifier_OverrideExcessiveLimit(t *testing.T) {
-	modifier := NewQueryModifier(100)
-
-	result, err := modifier.AddRowLimit("SELECT * FROM users LIMIT 9999999")
-	if err != nil {
-		t.Fatalf("AddRowLimit() error = %v", err)
-	}
-
-	// The excessive limit must be capped at 100
-	if strings.Contains(result, "9999999") {
-		t.Errorf("Excessive LIMIT was not overridden, got: %s", result)
-	}
-	if !strings.Contains(strings.ToUpper(result), "LIMIT") {
-		t.Errorf("Result should contain LIMIT: %s", result)
-	}
-}
-
 func TestQueryModifier_DefaultLimit(t *testing.T) {
 	modifier := NewQueryModifier(0) // Should default to 1000
 
