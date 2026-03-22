@@ -74,6 +74,11 @@ type ToolParameter struct {
 	Description string `mapstructure:"description"`
 	Required    bool   `mapstructure:"required"`
 	Default     string `mapstructure:"default"`
+	// Type constrains the allowed values for this parameter.
+	// Recognised values: "string" (default), "integer", "number", "date", "identifier".
+	// Using a precise type is strongly recommended to prevent SQL injection when the
+	// parameter is interpolated directly into the query template without quotes.
+	Type string `mapstructure:"type"`
 }
 
 // LoadConfig loads the CoreMCP configuration from a YAML file.

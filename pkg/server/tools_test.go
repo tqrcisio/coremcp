@@ -97,13 +97,13 @@ func TestAddCustomTool(t *testing.T) {
 	}
 	mcpSrv.AddSource("test_db", src, true)
 
-	// Add a custom tool
+	// Add a custom tool with a typed parameter
 	err := mcpSrv.AddCustomTool(
 		"get_user_orders",
 		"Get orders for a specific user",
 		"test_db",
 		"SELECT * FROM orders WHERE user_id = {{user_id}}",
-		[]string{"user_id"},
+		[]ToolParam{{Name: "user_id", Type: "integer", Required: true}},
 	)
 
 	if err != nil {
@@ -179,11 +179,13 @@ func TestCustomToolRouting(t *testing.T) {
 
 	// Register two tools that share a parameter name — routing must not confuse them.
 	if err := mcpSrv.AddCustomTool("tool_a", "Tool A", "test_db",
-		"SELECT * FROM orders WHERE user_id = {{id}}", []string{"id"}); err != nil {
+		"SELECT * FROM orders WHERE user_id = {{id}}",
+		[]ToolParam{{Name: "id", Type: "integer", Required: true}}); err != nil {
 		t.Fatalf("AddCustomTool tool_a failed: %v", err)
 	}
 	if err := mcpSrv.AddCustomTool("tool_b", "Tool B", "test_db",
-		"SELECT * FROM users WHERE id = {{id}}", []string{"id"}); err != nil {
+		"SELECT * FROM users WHERE id = {{id}}",
+		[]ToolParam{{Name: "id", Type: "integer", Required: true}}); err != nil {
 		t.Fatalf("AddCustomTool tool_b failed: %v", err)
 	}
 
@@ -221,20 +223,25 @@ func TestCustomToolSQLInjectionBlocked(t *testing.T) {
 	}
 	mcpSrv.AddSource("test_db", src, true)
 
+	// Integer-typed parameter — only bare integers are accepted.
 	if err := mcpSrv.AddCustomTool("get_user", "Get user", "test_db",
-		"SELECT * FROM users WHERE id = {{id}}", []string{"id"}); err != nil {
+		"SELECT * FROM users WHERE id = {{id}}",
+		[]ToolParam{{Name: "id", Type: "integer", Required: true}}); err != nil {
 		t.Fatalf("AddCustomTool failed: %v", err)
 	}
 
-	injections := []string{
+	intInjections := []string{
+		"1 OR 1=1",      // logic-injection without quotes/semicolons — previously bypassed denylist
 		"1; DROP TABLE users",
 		"1' OR '1'='1",
 		"1 -- comment",
 		"1 /* block */",
+		"(SELECT 1)",
+		"1 UNION SELECT 1",
 	}
 
 	ctx := context.Background()
-	for _, payload := range injections {
+	for _, payload := range intInjections {
 		req := mcp.CallToolRequest{}
 		req.Params.Arguments = map[string]interface{}{"id": payload}
 		result, err := mcpSrv.handleNamedCustomTool(ctx, req, "get_user")
@@ -242,9 +249,29 @@ func TestCustomToolSQLInjectionBlocked(t *testing.T) {
 			t.Fatalf("unexpected Go error for payload %q: %v", payload, err)
 		}
 		text := getResultText(result)
-		if !strings.Contains(text, "Invalid parameter") && !strings.Contains(text, "disallowed") {
-			t.Errorf("SQL injection payload %q was not blocked, got: %s", payload, text)
+		if !strings.Contains(text, "Invalid parameter") {
+			t.Errorf("integer injection payload %q was not blocked, got: %s", payload, text)
 		}
+	}
+
+	// String-typed parameter — single quotes must be escaped, not stripped.
+	if err := mcpSrv.AddCustomTool("get_order", "Get order by status", "test_db",
+		"SELECT * FROM orders WHERE status = '{{status}}'",
+		[]ToolParam{{Name: "status", Type: "string", Required: true}}); err != nil {
+		t.Fatalf("AddCustomTool get_order failed: %v", err)
+	}
+
+	// A value with a quote must be coerced (doubled), not rejected.
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]interface{}{"status": "O'Brien"}
+	result, err := mcpSrv.handleNamedCustomTool(ctx, req, "get_order")
+	if err != nil {
+		t.Fatalf("unexpected Go error for quoted string: %v", err)
+	}
+	// Should succeed (dummy source returns rows) or at least not return "Invalid parameter".
+	text := getResultText(result)
+	if strings.Contains(text, "Invalid parameter") {
+		t.Errorf("valid string with quote was unexpectedly rejected: %s", text)
 	}
 }
 

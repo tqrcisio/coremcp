@@ -112,6 +112,20 @@ security:
 #   list_procedures   - list all stored procedures with parameters
 #   execute_procedure - run a stored procedure (requires readonly: false on the source)
 custom_tools:
+  # Each parameter accepts an optional `type` field that constrains what values
+  # the AI is allowed to pass.  Using a precise type is strongly recommended
+  # to prevent SQL injection when the value is interpolated into the query:
+  #
+  #   type: integer    — only bare integers accepted (e.g. 42); safe unquoted
+  #   type: number     — integers and decimals (e.g. 3.14); safe unquoted
+  #   type: date       — YYYY-MM-DD only (e.g. 2024-01-31); wrap in quotes in template
+  #   type: identifier — letters/digits/underscores only; safe unquoted
+  #   type: string     — default; single quotes escaped ('→''); ALWAYS wrap {{param}} in
+  #                      quotes inside the query template: WHERE name = '{{name}}'
+  #
+  # Values that fail type validation are rejected before the query runs, so
+  # payloads like "1 OR 1=1" are blocked when type is "integer" or "identifier".
+
   # Example: Get daily sales summary
   - name: "get_daily_sales"
     description: "Retrieves daily sales summary for a specific date"
@@ -121,6 +135,7 @@ custom_tools:
       - name: "date"
         description: "Date in YYYY-MM-DD format"
         required: true
+        type: "date"   # enforces YYYY-MM-DD; blocks arbitrary strings
 
   # Example: Get top customers
   - name: "get_top_customers"
@@ -132,6 +147,7 @@ custom_tools:
         description: "Number of top customers to return"
         required: true
         default: "10"
+        type: "integer"   # prevents "1 OR 1=1" style injections
 
   # Example: No-parameter custom query
   - name: "get_pending_orders"

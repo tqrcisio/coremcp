@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/corebasehq/coremcp/pkg/core"
@@ -17,6 +18,66 @@ import (
 
 // safeIdentifierRe matches safe SQL identifiers (procedure/object names).
 var safeIdentifierRe = regexp.MustCompile(`^[\w.\[\]]+$`)
+
+// dateRe matches YYYY-MM-DD formatted dates.
+var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+
+// identifierRe matches simple SQL identifiers (letters, digits, underscores).
+var identifierRe = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+
+// ToolParam describes a single typed parameter accepted by a custom tool.
+// Type drives the validation applied before the value is interpolated into the
+// query template, providing the strongest protection against SQL injection.
+//
+// Supported types:
+//   - "integer"    — value must parse as a 64-bit integer; interpolated bare (no quotes needed)
+//   - "number"     — value must parse as a 64-bit float; interpolated bare
+//   - "date"       — value must match YYYY-MM-DD; interpolated bare (use quotes in template)
+//   - "identifier" — value must match ^[A-Za-z0-9_]+$; safe for unquoted interpolation
+//   - "string"     — default; single quotes are escaped ('→'') for safe interpolation inside
+//     SQL string literals — always wrap {{param}} in quotes in the template
+type ToolParam struct {
+	Name     string
+	Type     string // "string" | "integer" | "number" | "date" | "identifier"
+	Required bool
+	Default  string
+}
+
+// validateAndCoerceParam validates value against the declared type and returns a
+// safe string representation for direct SQL interpolation.
+//
+// For numeric types the value is parsed and re-stringified so arbitrary text
+// can never slip through.  For "string" single quotes are doubled (SQL standard
+// escaping), making the value safe when wrapped in quotes inside the template.
+func validateAndCoerceParam(value, paramType string) (string, error) {
+	switch paramType {
+	case "integer":
+		n, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		if err != nil {
+			return "", fmt.Errorf("expected integer, got %q", value)
+		}
+		return strconv.FormatInt(n, 10), nil
+	case "number":
+		f, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+		if err != nil {
+			return "", fmt.Errorf("expected number, got %q", value)
+		}
+		return strconv.FormatFloat(f, 'f', -1, 64), nil
+	case "date":
+		if !dateRe.MatchString(strings.TrimSpace(value)) {
+			return "", fmt.Errorf("expected date in YYYY-MM-DD format, got %q", value)
+		}
+		return strings.TrimSpace(value), nil
+	case "identifier":
+		trimmed := strings.TrimSpace(value)
+		if !identifierRe.MatchString(trimmed) {
+			return "", fmt.Errorf("expected identifier (letters, digits, underscores only), got %q", value)
+		}
+		return trimmed, nil
+	default: // "string" or unset — escape single quotes for safe SQL string-literal interpolation
+		return strings.ReplaceAll(value, "'", "''"), nil
+	}
+}
 
 // MCPServer represents the MCP server instance that handles database queries.
 type MCPServer struct {
@@ -33,7 +94,7 @@ type MCPServer struct {
 type customToolEntry struct {
 	sourceName string
 	query      string
-	parameters []string
+	parameters []ToolParam
 }
 
 type sourceEntry struct {
@@ -272,14 +333,23 @@ func (ms *MCPServer) GetSchemaContext() string {
 }
 
 // AddCustomTool registers a custom tool with a predefined query.
-func (ms *MCPServer) AddCustomTool(name, description, sourceName, query string, parameters []string) error {
+// Each parameter carries a Type that determines the validation applied before
+// the value is interpolated into the query template — see ToolParam for details.
+func (ms *MCPServer) AddCustomTool(name, description, sourceName, query string, parameters []ToolParam) error {
 	toolOptions := []mcp.ToolOption{
 		mcp.WithDescription(description),
 	}
 
 	for _, param := range parameters {
-		toolOptions = append(toolOptions,
-			mcp.WithString(param, mcp.Required(), mcp.Description(fmt.Sprintf("Parameter: %s", param))))
+		desc := param.Name
+		if param.Type != "" && param.Type != "string" {
+			desc = fmt.Sprintf("%s (%s)", param.Name, param.Type)
+		}
+		opt := mcp.WithString(param.Name, mcp.Description(desc))
+		if param.Required {
+			opt = mcp.WithString(param.Name, mcp.Required(), mcp.Description(desc))
+		}
+		toolOptions = append(toolOptions, opt)
 	}
 
 	tool := mcp.NewTool(name, toolOptions...)
@@ -299,17 +369,6 @@ func (ms *MCPServer) AddCustomTool(name, description, sourceName, query string, 
 	return nil
 }
 
-// sanitizeCustomToolParam rejects values that contain SQL injection patterns.
-func sanitizeCustomToolParam(value string) (string, error) {
-	dangerous := []string{"'", ";", "--", "/*", "*/"}
-	for _, pattern := range dangerous {
-		if strings.Contains(value, pattern) {
-			return "", fmt.Errorf("disallowed character sequence %q", pattern)
-		}
-	}
-	return value, nil
-}
-
 func (ms *MCPServer) handleNamedCustomTool(ctx context.Context, request mcp.CallToolRequest, toolName string) (*mcp.CallToolResult, error) {
 	toolEntry, exists := ms.customTools[toolName]
 	if !exists {
@@ -323,15 +382,15 @@ func (ms *MCPServer) handleNamedCustomTool(ctx context.Context, request mcp.Call
 
 	paramValues := make(map[string]string)
 	for _, param := range toolEntry.parameters {
-		val, err := request.RequireString(param)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Missing required parameter: %s", param)), nil
+		raw := request.GetString(param.Name, param.Default)
+		if raw == "" && param.Required {
+			return mcp.NewToolResultError(fmt.Sprintf("Missing required parameter: %s", param.Name)), nil
 		}
-		sanitized, err := sanitizeCustomToolParam(val)
+		coerced, err := validateAndCoerceParam(raw, param.Type)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Invalid parameter %q: %v", param, err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid parameter %q: %v", param.Name, err)), nil
 		}
-		paramValues[param] = sanitized
+		paramValues[param.Name] = coerced
 	}
 
 	query := toolEntry.query

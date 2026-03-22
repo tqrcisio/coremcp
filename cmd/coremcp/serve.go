@@ -69,9 +69,14 @@ var serveCmd = &cobra.Command{
 		if len(cfg.CustomTools) > 0 {
 			log.Printf("Registering %d custom tool(s)...", len(cfg.CustomTools))
 			for _, toolCfg := range cfg.CustomTools {
-				params := make([]string, len(toolCfg.Parameters))
+				params := make([]server.ToolParam, len(toolCfg.Parameters))
 				for i, p := range toolCfg.Parameters {
-					params[i] = p.Name
+					params[i] = server.ToolParam{
+						Name:     p.Name,
+						Type:     p.Type,
+						Required: p.Required,
+						Default:  p.Default,
+					}
 				}
 
 				if err := mcpSrv.AddCustomTool(
