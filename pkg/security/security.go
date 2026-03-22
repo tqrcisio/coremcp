@@ -275,16 +275,29 @@ func (qm *QueryModifier) AddRowLimit(query string) (string, error) {
 	}
 }
 
-// addRowLimitSimple adds row limit using simple string manipulation.
+// limitRe matches a LIMIT clause with its numeric value, optionally followed by an OFFSET.
+// Used by addRowLimitSimple to safely replace only the row-count token.
+var limitRe = regexp.MustCompile(`(?i)\bLIMIT\s+(\d+)`)
+
+// addRowLimitSimple adds or overrides the LIMIT clause using simple string
+// manipulation. It is used as a fallback when the SQL parser cannot parse the
+// query (e.g., dialect-specific syntax). Any existing LIMIT that exceeds
+// maxRowLimit is replaced so the cap is enforced consistently.
+// OFFSET and any other clauses that follow the LIMIT value are preserved.
 func (qm *QueryModifier) addRowLimitSimple(query string) string {
 	q := strings.TrimSpace(query)
-	qUpper := strings.ToUpper(q)
 
-	// Check if LIMIT already exists
-	if strings.Contains(qUpper, "LIMIT") {
-		return query
+	if m := limitRe.FindStringSubmatchIndex(q); m != nil {
+		// m[2]:m[3] is the capture group holding the numeric value.
+		existing, err := strconv.Atoi(q[m[2]:m[3]])
+		if err == nil && existing <= qm.maxRowLimit {
+			// Existing limit is within the allowed maximum — keep query unchanged.
+			return query
+		}
+		// Replace only the numeric token; preserve everything before and after.
+		return q[:m[2]] + strconv.Itoa(qm.maxRowLimit) + q[m[3]:]
 	}
 
-	// Add LIMIT at the end
+	// No LIMIT found — append one.
 	return fmt.Sprintf("%s LIMIT %d", q, qm.maxRowLimit)
 }
