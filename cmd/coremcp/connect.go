@@ -492,7 +492,7 @@ func (c *ConnectClient) executeSQL(sourceName, query string, params map[string]i
 		return nil, fmt.Errorf("source not found: %s", sourceName)
 	}
 
-	// Validate and rate-limit the query before execution.
+	// Validate the query before execution.
 	c.mu.RLock()
 	validator := c.queryValidator
 	modifier := c.queryModifier
