@@ -253,8 +253,14 @@ func (qm *QueryModifier) AddRowLimit(query string) (string, error) {
 			}
 		}
 
-		// Add or override LIMIT clause
+		// Add or override LIMIT clause, preserving any existing OFFSET
+		var existingOffset sqlparser.Expr
+		if s.Limit != nil {
+			existingOffset = s.Limit.Offset
+		}
+
 		s.Limit = &sqlparser.Limit{
+			Offset:   existingOffset,
 			Rowcount: sqlparser.NewIntVal([]byte(fmt.Sprintf("%d", qm.maxRowLimit))),
 		}
 
