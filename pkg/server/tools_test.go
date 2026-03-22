@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/corebasehq/coremcp/pkg/adapter/dummy"
+	"github.com/corebasehq/coremcp/pkg/core"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -168,14 +169,26 @@ func getResultText(result *mcp.CallToolResult) string {
 	return ""
 }
 
+// spySource wraps a real Source and records the last query sent to ExecuteQuery.
+type spySource struct {
+	core.Source
+	lastQuery string
+}
+
+func (s *spySource) ExecuteQuery(ctx context.Context, query string, args ...any) (*core.QueryResult, error) {
+	s.lastQuery = query
+	return s.Source.ExecuteQuery(ctx, query, args...)
+}
+
 func TestCustomToolRouting(t *testing.T) {
 	mcpSrv := NewMCPServer("test-server", "1.0.0")
 
-	src, _ := dummy.New("dummy://test")
-	if err := src.Connect(context.Background()); err != nil {
+	inner, _ := dummy.New("dummy://test")
+	if err := inner.Connect(context.Background()); err != nil {
 		t.Fatalf("Failed to connect source: %v", err)
 	}
-	mcpSrv.AddSource("test_db", src, true)
+	spy := &spySource{Source: inner}
+	mcpSrv.AddSource("test_db", spy, true)
 
 	// Register two tools that share a parameter name — routing must not confuse them.
 	if err := mcpSrv.AddCustomTool("tool_a", "Tool A", "test_db",
@@ -191,7 +204,7 @@ func TestCustomToolRouting(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Call tool_a and verify it runs the orders query
+	// Call tool_a and verify it runs the orders query.
 	reqA := mcp.CallToolRequest{}
 	reqA.Params.Arguments = map[string]interface{}{"id": "1"}
 	resultA, err := mcpSrv.handleNamedCustomTool(ctx, reqA, "tool_a")
@@ -201,8 +214,11 @@ func TestCustomToolRouting(t *testing.T) {
 	if resultA == nil {
 		t.Fatal("tool_a result is nil")
 	}
+	if !strings.Contains(spy.lastQuery, "orders") {
+		t.Errorf("tool_a should query orders table, but executed: %s", spy.lastQuery)
+	}
 
-	// Call tool_b and verify it runs the users query
+	// Call tool_b and verify it runs the users query.
 	reqB := mcp.CallToolRequest{}
 	reqB.Params.Arguments = map[string]interface{}{"id": "2"}
 	resultB, err := mcpSrv.handleNamedCustomTool(ctx, reqB, "tool_b")
@@ -211,6 +227,9 @@ func TestCustomToolRouting(t *testing.T) {
 	}
 	if resultB == nil {
 		t.Fatal("tool_b result is nil")
+	}
+	if !strings.Contains(spy.lastQuery, "users") {
+		t.Errorf("tool_b should query users table, but executed: %s", spy.lastQuery)
 	}
 }
 
