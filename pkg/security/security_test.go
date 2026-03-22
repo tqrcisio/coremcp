@@ -212,6 +212,12 @@ func TestQueryModifier_AddRowLimit(t *testing.T) {
 			expectLimit:  true,
 			maxRowsInSQL: 100,
 		},
+		{
+			name:         "Override excessive LIMIT",
+			query:        "SELECT * FROM users LIMIT 9999999",
+			expectLimit:  true,
+			maxRowsInSQL: 100, // excessive limit should be overridden to 100
+		},
 	}
 
 	for _, tt := range tests {
