@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.4] - 2026-03-22
+
+### Fixed
+- **MSSQL TOP/LIMIT conflict:** Queries containing `SELECT TOP N` no longer receive a spurious `LIMIT N` suffix from `QueryModifier`, which caused SQL Server to return `Incorrect syntax near 'LIMIT'`.
+- **MCP initialize timeout:** Database schemas are now loaded in a background goroutine after server startup, preventing the MCP `initialize` handshake from timing out on large databases.
+
+### Security
+- **Custom tool parameter validation:** Replaced metacharacter denylist with strict type-based allowlisting. Custom tool parameters now declare a `type` field (`integer`, `number`, `date`, `identifier`, `string`); values are validated and re-serialised before interpolation — eliminating logic-injection payloads such as `1 OR 1=1`.
+
+### Changed
+- `coremcp.example.yaml` updated with `type` field examples for custom tool parameters.
+
+## [0.4.3] - 2026-03-05
+
+### Added
+- **Glama registry support:** Added `glama.json` for listing CoreMCP on the Glama MCP registry.
+
+### Fixed
+- **Docker default config:** Docker image now uses `coremcp.example.yaml` as the default configuration instead of requiring a mounted config file, making the out-of-the-box experience work correctly.
+
 ## [0.4.2] - 2026-02-18
 
 ### Fixed
@@ -209,7 +229,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basic license (Apache 2.0) and gitignore files.
 - Core package interfaces and types.
 
-[Unreleased]: https://github.com/corebasehq/coremcp/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/corebasehq/coremcp/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/corebasehq/coremcp/compare/v0.4.3...v0.4.4
+[0.4.3]: https://github.com/corebasehq/coremcp/compare/v0.4.2...v0.4.3
+[0.4.2]: https://github.com/corebasehq/coremcp/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/corebasehq/coremcp/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/corebasehq/coremcp/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/corebasehq/coremcp/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/corebasehq/coremcp/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/corebasehq/coremcp/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/corebasehq/coremcp/compare/v0.0.1...v0.1.0

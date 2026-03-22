@@ -127,7 +127,7 @@ func TestConvertLimitToTop(t *testing.T) {
 		},
 		{
 			"SELECT TOP(50) id FROM orders LIMIT 1000",
-			"SELECT TOP(50) id FROM orders LIMIT 1000",
+			"SELECT TOP(50) id FROM orders",
 		},
 		// No LIMIT clause — unchanged
 		{
