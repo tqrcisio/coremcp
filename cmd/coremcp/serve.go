@@ -54,8 +54,8 @@ var serveCmd = &cobra.Command{
 				continue
 			}
 
-			mcpSrv.AddSource(sourceCfg.Name, src, sourceCfg.ReadOnly)
-			log.Printf("Source ready: %s (%s) [ReadOnly: %v, NoLock: %v, NormalizeTurkish: %v]", sourceCfg.Name, sourceCfg.Type, sourceCfg.ReadOnly, sourceCfg.NoLock, sourceCfg.NormalizeTurkish)
+			mcpSrv.AddSource(sourceCfg.Name, src, sourceCfg.IsReadOnly())
+			log.Printf("Source ready: %s (%s) [ReadOnly: %v, NoLock: %v, NormalizeTurkish: %v]", sourceCfg.Name, sourceCfg.Type, sourceCfg.IsReadOnly(), sourceCfg.NoLock, sourceCfg.NormalizeTurkish)
 		}
 
 		// Load database schemas for AI context in background

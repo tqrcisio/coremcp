@@ -68,6 +68,59 @@ server:
 	}
 }
 
+func TestSourceReadOnlyDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "coremcp.yaml")
+
+	// Source without readonly field — should default to true
+	configYAML := `
+server:
+  name: "test"
+  version: "0.1.0"
+sources:
+  - name: "test_db"
+    type: "dummy"
+    dsn: "dummy://test"
+`
+	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
+		t.Fatalf("Failed to write test config: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if len(cfg.Sources) == 0 {
+		t.Fatal("Expected at least one source")
+	}
+	if !cfg.Sources[0].IsReadOnly() {
+		t.Error("Expected source without readonly field to default to true")
+	}
+
+	// Source with readonly: false — should be respected
+	configYAML2 := `
+server:
+  name: "test"
+  version: "0.1.0"
+sources:
+  - name: "test_db"
+    type: "dummy"
+    dsn: "dummy://test"
+    readonly: false
+`
+	if err := os.WriteFile(configPath, []byte(configYAML2), 0644); err != nil {
+		t.Fatalf("Failed to write test config: %v", err)
+	}
+	cfg2, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg2.Sources[0].IsReadOnly() {
+		t.Error("Expected source with readonly: false to not be read-only")
+	}
+}
+
 func TestLoadConfigDefaults(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "coremcp.yaml")

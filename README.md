@@ -10,7 +10,7 @@
 CoreMCP by CoreBaseHQ provides a secure, extensible bridge between AI assistants (like Claude Desktop) and your databases through the Model Context Protocol.
 
 ## 🚀 Features
-**⚠️ Safety First: CoreMCP is designed to be Read-Only by default. We strongly recommend creating a specific database user with SELECT permissions only.**
+**⚠️ Safety First: CoreMCP defaults to Read-Only mode — omitting `readonly` in your config is safe. We strongly recommend creating a specific database user with SELECT permissions only.**
 - 🔌 **Multiple Database Support**: MSSQL, Firebird (coming soon), and extensible adapter system
 - 🧠 **Automatic Schema Discovery**: CoreMCP automatically scans your database tables, columns, foreign keys, and descriptions to provide AI context
 - 📝 **Column Comments Support**: Extracts and presents database column comments/descriptions to the AI for better query understanding
@@ -120,7 +120,7 @@ security:
 | `name` | string | — | Unique source identifier |
 | `type` | string | — | Adapter type: `mssql`, `dummy` |
 | `dsn` | string | — | Connection string |
-| `readonly` | bool | `false` | Restrict to SELECT-only at the config level |
+| `readonly` | bool | `true` | Restrict to SELECT-only at the config level. Set `false` explicitly to allow `execute_procedure`. |
 | `no_lock` | bool | `false` | **(MSSQL only)** Run all SELECT queries under `READ UNCOMMITTED` transaction isolation level. Equivalent to adding `WITH (NOLOCK)` to every table reference. Eliminates shared lock acquisition, improving read throughput on busy OLTP databases. **Trade-off:** may return dirty (uncommitted) rows. |
 | `normalize_turkish` | bool | `false` | **(MSSQL only)** Enable Turkish character normalization middleware. **Outgoing:** Turkish chars inside SQL string literals are converted to ASCII uppercase before the query is sent (`'Hüseyin'` → `'HUSEYIN'`, `'Şeker'` → `'SEKER'`). **Incoming:** Windows-1254 / Windows-1252 mojibake in result strings is auto-corrected. Use this for legacy Turkish ERP databases with `Turkish_CI_AS` collation. |
 

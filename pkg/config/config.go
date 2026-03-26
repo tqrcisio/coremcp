@@ -54,9 +54,17 @@ type SourceConfig struct {
 	Name             string `mapstructure:"name"`
 	Type             string `mapstructure:"type"` // mssql, firebird, postgres
 	DSN              string `mapstructure:"dsn"`  // Data Source Name (Connection String)
-	ReadOnly         bool   `mapstructure:"readonly"`
+	ReadOnly         *bool  `mapstructure:"readonly"`
 	NoLock           bool   `mapstructure:"no_lock"`           // MSSQL: Use READ UNCOMMITTED isolation (equivalent to WITH (NOLOCK))
 	NormalizeTurkish bool   `mapstructure:"normalize_turkish"` // Normalize Turkish chars in SQL literals (for legacy Turkish_CI_AS databases)
+}
+
+// IsReadOnly returns true if this source is read-only (defaults to true when not explicitly set).
+func (s SourceConfig) IsReadOnly() bool {
+	if s.ReadOnly == nil {
+		return true
+	}
+	return *s.ReadOnly
 }
 
 // CustomToolConfig defines a custom MCP tool with a predefined query.
@@ -143,10 +151,10 @@ func LoadConfig(path string) (*Config, error) {
 	if len(cfg.Sources) == 0 {
 		cfg.Sources = []SourceConfig{
 			{
-				Name:     "dummy",
-				Type:     "dummy",
-				DSN:      "dummy://default",
-				ReadOnly: true,
+				Name: "dummy",
+				Type: "dummy",
+				DSN:  "dummy://default",
+				// ReadOnly defaults to true via IsReadOnly()
 			},
 		}
 	}

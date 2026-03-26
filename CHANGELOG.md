@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.5] - 2026-03-26
+
+### Changed
+- **`readonly` now defaults to `true`**: Sources without an explicit `readonly` field are now read-only by default. Previously the zero value for bool meant omitting the field silently allowed write operations. Set `readonly: false` explicitly to enable `execute_procedure`.
+
 ## [0.4.4] - 2026-03-22
 
 ### Fixed

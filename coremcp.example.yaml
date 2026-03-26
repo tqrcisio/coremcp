@@ -37,7 +37,7 @@ sources:
   # - name: "erp_db"
   #   type: "mssql"
   #   dsn: "sqlserver://sa:password@192.168.1.10:1433?database=ERPDB&encrypt=disable"
-  #   readonly: false          # Set false to allow execute_procedure tool
+  #   readonly: false          # Override default (true) to allow execute_procedure tool
   #   no_lock: true            # Avoid locking on busy OLTP
   #   normalize_turkish: true  # Normalize Turkish chars in SQL literals for legacy Turkish_CI_AS databases
   #                            # Outgoing: 'Huseyin' to 'HUSEYIN', 'seker' to 'SEKER' inside WHERE clauses
